@@ -138,7 +138,7 @@ class BlockAnimator:
         self,
         block: BlockState,
         goal_cell: Tuple[int, int],
-        duration: float = 0.6,
+        duration: float = 0.8,
         on_complete: Optional[Callable[[], None]] = None
     ):
         """Kích hoạt animation thụt chìm vào lỗ đích khi thắng cuộc."""
@@ -486,10 +486,24 @@ class BlockAnimator:
                                     is_cube0=(other_idx == 0), is_cube1=(other_idx == 1))
 
     def _render_fall_goal(self, surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p: float):
-        """Khối chìm dần thẳng đứng xuống lỗ đích phát sáng."""
+        """Khối chìm sâu dần thẳng đứng vào lòng lỗ đích phát sáng và biến mất hoàn toàn."""
+        if p >= 0.90:
+            return  # Khối đã rớt đủ sâu và biến mất hoàn toàn
+
         rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block)
-        z_offset = -2.4 * (p ** 1.3)
-        verts = self._make_cuboid_vertices(rmin, rmax, cmin, cmax, zmin + z_offset, zmax + z_offset)
+        # Rơi nhanh dần theo trọng lực xuống sâu dưới mặt sàn (đáy chìm xuống -5.0, đỉnh chìm xuống -3.0)
+        z_offset = -5.0 * (p ** 1.6)
+
+        # Thu nhỏ khối dần vào tâm miệng lỗ đích khi chìm sâu (hiệu ứng hút sâu vào hố)
+        scale = max(0.1, 1.0 - (p ** 1.3) * 0.7)
+        mid_r = (rmin + rmax) / 2.0
+        mid_c = (cmin + cmax) / 2.0
+        s_rmin = mid_r + (rmin - mid_r) * scale
+        s_rmax = mid_r + (rmax - mid_r) * scale
+        s_cmin = mid_c + (cmin - mid_c) * scale
+        s_cmax = mid_c + (cmax - mid_c) * scale
+
+        verts = self._make_cuboid_vertices(s_rmin, s_rmax, s_cmin, s_cmax, zmin + z_offset, zmax + z_offset)
         self._render_3d_box(surface, verts, origin_x, origin_y, tile_w, tile_h, block_unit_h, draw_shadow=False)
 
     def _render_fall_edge(self, surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p: float):
