@@ -248,14 +248,14 @@ class BloxorzApp:
             pygame.Rect(panel_x, 50, 60, 30), "< Prev",
             self.prev_level, self.font_btn
         ))
-        # Nút New Game và Restart màu đỏ theo yêu cầu
+        # Nút New Game và Restart màu xanh lá (BTN_SUCCESS)
         self.buttons.append(Button(
             pygame.Rect(panel_x + 70, 50, 100, 30), "New Game",
-            self.new_game, self.font_btn, bg_color=BTN_DANGER, hover_color=BTN_DANGER_HOVER
+            self.new_game, self.font_btn, bg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOVER
         ))
         self.buttons.append(Button(
             pygame.Rect(panel_x + 180, 50, 100, 30), "Restart",
-            self.restart_level, self.font_btn, bg_color=BTN_DANGER, hover_color=BTN_DANGER_HOVER
+            self.restart_level, self.font_btn, bg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOVER
         ))
         self.buttons.append(Button(
             pygame.Rect(panel_x + 290, 50, 60, 30), "Next >",
@@ -451,11 +451,11 @@ class BloxorzApp:
             return
 
         self.active_algo = algo_name
-        # Cập nhật màu nút: thuật toán được chọn chuyển màu xanh lá (BTN_SUCCESS), các nút còn lại giữ màu xanh dương (BTN_PRIMARY)
+        # Cập nhật màu nút: thuật toán được chọn chuyển sang màu đỏ (BTN_DANGER), các nút còn lại giữ màu xanh dương (BTN_PRIMARY)
         for name, btn in self.btn_solvers.items():
             if name == algo_name:
-                btn.bg_color = BTN_SUCCESS
-                btn.hover_color = BTN_SUCCESS_HOVER
+                btn.bg_color = BTN_DANGER
+                btn.hover_color = BTN_DANGER_HOVER
             else:
                 btn.bg_color = BTN_PRIMARY
                 btn.hover_color = BTN_PRIMARY_HOVER
