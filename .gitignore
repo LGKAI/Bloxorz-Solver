@@ -1,0 +1,57 @@
+# ==========================================
+# Byte-compiled / optimized / cache files
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Môi trường ảo (Virtual Environments)
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ==========================================
+# Cấu hình IDE & Text Editor
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ==========================================
+# Tệp tin rác của Hệ điều hành (OS files)
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ==========================================
+# Nhật ký thực thi & Tệp tạm (Logs & Scratch)
+# ==========================================
+*.log
+scratch/
+scratch_*.txt
+*.tmp
+*.bak
+
+# ==========================================
+# Báo cáo kiểm thử & đo độ bao phủ (nếu có)
+# ==========================================
+.pytest_cache/
+.coverage
+htmlcov/

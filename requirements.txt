@@ -1,0 +1,4 @@
+# Các thư viện phục vụ đồ án Bloxorz Solver
+pygame>=2.5.0
+matplotlib>=3.7.0
+numpy>=1.24.0
