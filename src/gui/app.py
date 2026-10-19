@@ -732,39 +732,68 @@ class BloxorzApp:
                 origin_x = self.renderer.origin_x
                 origin_y = self.renderer.origin_y
 
-                self.renderer.render_board(
-                    self.map_data,
-                    self.game_state.bridge_state,
-                    origin_x,
-                    origin_y,
-                    tile_offsets=self.board_animator.tile_offsets if self.board_animator.is_animating() else None,
-                    hidden_tiles=self.board_animator.hidden_tiles if self.board_animator.is_animating() else None
-                )
+                should_occlude = self.animator.is_animating() and self.animator.should_occlude_falling()
 
-                if self.board_animator.is_animating():
-                    if self.board_animator.should_render_block():
-                        z_off = self.board_animator.get_spawn_z_offset()
-                        self.renderer.render_block(
-                            self.game_state.block,
-                            origin_x,
-                            origin_y,
-                            pulse_val=pulse_val,
-                            z_offset=z_off
-                        )
-                elif self.animator.is_animating():
+                if should_occlude:
+                    fall_depth = self.animator.get_fall_depth()
+                    # 1. Vẽ các ô sàn ở phía sau khối rơi
+                    self.renderer.render_board(
+                        self.map_data,
+                        self.game_state.bridge_state,
+                        origin_x,
+                        origin_y,
+                        max_depth=fall_depth
+                    )
+                    # 2. Vẽ khối đang rơi
                     self.animator.render(
                         self.screen,
                         origin_x,
                         origin_y,
                         self.renderer
                     )
-                elif not self.game_over and not self.game_won and not self.transition_active:
-                    self.renderer.render_block(
-                        self.game_state.block,
+                    # 3. Vẽ các ô sàn ở phía trước khối rơi (tự động che khuất khối rơi!)
+                    self.renderer.render_board(
+                        self.map_data,
+                        self.game_state.bridge_state,
                         origin_x,
                         origin_y,
-                        pulse_val=pulse_val
+                        min_depth=fall_depth
                     )
+                else:
+                    # Vẽ toàn bộ sàn bình thường
+                    self.renderer.render_board(
+                        self.map_data,
+                        self.game_state.bridge_state,
+                        origin_x,
+                        origin_y,
+                        tile_offsets=self.board_animator.tile_offsets if self.board_animator.is_animating() else None,
+                        hidden_tiles=self.board_animator.hidden_tiles if self.board_animator.is_animating() else None
+                    )
+
+                    if self.board_animator.is_animating():
+                        if self.board_animator.should_render_block():
+                            z_off = self.board_animator.get_spawn_z_offset()
+                            self.renderer.render_block(
+                                self.game_state.block,
+                                origin_x,
+                                origin_y,
+                                pulse_val=pulse_val,
+                                z_offset=z_off
+                            )
+                    elif self.animator.is_animating():
+                        self.animator.render(
+                            self.screen,
+                            origin_x,
+                            origin_y,
+                            self.renderer
+                        )
+                    elif not self.game_over and not self.game_won and not self.transition_active:
+                        self.renderer.render_block(
+                            self.game_state.block,
+                            origin_x,
+                            origin_y,
+                            pulse_val=pulse_val
+                        )
 
                 # Vẽ hiệu ứng phụ (mảnh vỡ sàn nứt vỡ, quầng sáng đích)
                 self.animator.render_overlays(
