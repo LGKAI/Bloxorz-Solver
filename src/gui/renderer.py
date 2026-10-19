@@ -56,22 +56,24 @@ COLOR_CUBE1_LEFT = (165, 65, 195)
 COLOR_CUBE1_RIGHT = (190, 85, 220)
 
 
+from src.gui.safe_font import get_safe_font, SafeFont
+
+
 class IsoRenderer:
     """
     Trình dựng hình đồ họa 3D Isometric.
     """
 
-    def __init__(self, screen: pygame.Surface, tile_width: int = 44, tile_height: int = 22, tile_depth: int = 8):
+    def __init__(self, screen, tile_width: int = 44, tile_height: int = 22, tile_depth: int = 8):
         self.screen = screen
         self.tile_w = tile_width
         self.tile_h = tile_height
         self.tile_d = tile_depth
         self.block_unit_h = 28  # Chiều cao của 1 tầng khối 1x1x1
 
-        # Khởi tạo font chữ để vẽ ký hiệu công tắc
-        pygame.font.init()
-        self.font_small = pygame.font.SysFont("segoeui", 13, bold=True)
-        self.font_bold = pygame.font.SysFont("segoeui", 15, bold=True)
+        # Khởi tạo font chữ để vẽ ký hiệu công tắc an toàn
+        self.font_small = get_safe_font("segoeui", 13, bold=True)
+        self.font_bold = get_safe_font("segoeui", 15, bold=True)
 
     def grid_to_iso(self, r: int, c: int, origin_x: int, origin_y: int) -> Tuple[int, int]:
         """
