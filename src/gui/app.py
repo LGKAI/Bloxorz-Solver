@@ -55,6 +55,8 @@ BTN_PRIMARY = (31, 111, 235)
 BTN_PRIMARY_HOVER = (45, 128, 255)
 BTN_SUCCESS = (35, 134, 54)
 BTN_SUCCESS_HOVER = (46, 160, 67)
+BTN_DANGER = (218, 54, 51)
+BTN_DANGER_HOVER = (248, 81, 73)
 
 
 class Button:
@@ -106,6 +108,8 @@ class BloxorzApp:
 
     def __init__(self, levels_dir: str = "Source/levels", width: int = 1260, height: int = 780):
         pygame.init()
+        # Đặt biểu tượng khối hộp 3D Isometric Bloxorz chuẩn nét cao cho cửa sổ
+        self._set_app_icon()
         pygame.display.set_caption("Bloxorz Solver")
         self.width = width
         self.height = height
@@ -115,6 +119,10 @@ class BloxorzApp:
             pygame.DOUBLEBUF | pygame.SCALED | pygame.RESIZABLE
         )
         self.clock = pygame.time.Clock()
+
+        # Quản lý thuật toán đang chọn và các nút solver
+        self.active_algo: Optional[str] = None
+        self.btn_solvers: Dict[str, Button] = {}
 
         # Tải danh sách các màn chơi
         self.levels_dir = levels_dir
@@ -177,9 +185,55 @@ class BloxorzApp:
         # Tải màn chơi ban đầu
         self.load_level(0)
 
+    def _create_block_icon_surface(self) -> pygame.Surface:
+        """Tạo bề mặt icon khối hộp chữ nhật 3D Bloxorz bằng Pygame khi không có file ảnh."""
+        surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        # Bóng đổ mờ bên dưới
+        shadow_pts = [(16, 26), (26, 29), (16, 31), (6, 29)]
+        pygame.draw.polygon(surf, (15, 20, 30, 160), shadow_pts)
+        # Các mặt khối 1x1x2 đứng
+        top_pts = [(16, 3), (25, 8), (16, 13), (7, 8)]
+        left_pts = [(7, 8), (16, 13), (16, 29), (7, 24)]
+        right_pts = [(16, 13), (25, 8), (25, 24), (16, 29)]
+        # Mặt trái (sáng vừa)
+        pygame.draw.polygon(surf, (205, 130, 60), left_pts)
+        # Mặt phải (tối hơn)
+        pygame.draw.polygon(surf, (145, 75, 30), right_pts)
+        # Mặt trên (sáng nhất)
+        pygame.draw.polygon(surf, (245, 185, 115), top_pts)
+        # Khía rãnh giữa phân chia 2 khối lập phương
+        pygame.draw.line(surf, (120, 60, 20), (7, 16), (16, 21), 1)
+        pygame.draw.line(surf, (90, 40, 15), (16, 21), (25, 16), 1)
+        # Viền sắc nét
+        pygame.draw.polygon(surf, (255, 225, 180), top_pts, 1)
+        pygame.draw.line(surf, (240, 180, 120), (16, 13), (16, 29), 1)
+        pygame.draw.lines(surf, (70, 35, 15), False, [(7, 8), (7, 24), (16, 29), (25, 24), (25, 8)], 1)
+        return surf
+
+    def _set_app_icon(self):
+        """Đặt biểu tượng khối hộp chữ nhật 3D Bloxorz cho cửa sổ ứng dụng."""
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+            if os.path.exists(icon_path):
+                icon_surf = pygame.image.load(icon_path)
+                pygame.display.set_icon(icon_surf)
+                return
+            icon_surf = self._create_block_icon_surface()
+            pygame.display.set_icon(icon_surf)
+        except Exception:
+            pass
+
+    def reset_solver_buttons(self):
+        """Đặt lại màu của tất cả nút giải thuật toán về màu xanh dương đồng nhất."""
+        self.active_algo = None
+        for btn in self.btn_solvers.values():
+            btn.bg_color = BTN_PRIMARY
+            btn.hover_color = BTN_PRIMARY_HOVER
+
     def _init_buttons(self):
         """Khởi tạo toàn bộ các nút điều khiển trên Sidebar."""
         self.buttons.clear()
+        self.btn_solvers.clear()
         panel_x = 830
 
         # Nhóm 1: Chọn màn chơi & Cửa sổ
@@ -194,45 +248,43 @@ class BloxorzApp:
             pygame.Rect(panel_x, 50, 60, 30), "< Prev",
             self.prev_level, self.font_btn
         ))
+        # Nút New Game và Restart màu đỏ theo yêu cầu
         self.buttons.append(Button(
             pygame.Rect(panel_x + 70, 50, 100, 30), "New Game",
-            self.new_game, self.font_btn, bg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOVER
+            self.new_game, self.font_btn, bg_color=BTN_DANGER, hover_color=BTN_DANGER_HOVER
         ))
         self.buttons.append(Button(
             pygame.Rect(panel_x + 180, 50, 100, 30), "Restart",
-            self.restart_level, self.font_btn, bg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER
+            self.restart_level, self.font_btn, bg_color=BTN_DANGER, hover_color=BTN_DANGER_HOVER
         ))
         self.buttons.append(Button(
             pygame.Rect(panel_x + 290, 50, 60, 30), "Next >",
             self.next_level, self.font_btn
         ))
 
-        # Nhóm 2: Các nút giải thuật toán
+        # Nhóm 2: Các nút giải thuật toán (đồng nhất màu xanh dương ban đầu, chuyển xanh lá khi được chọn)
         algo_y = 135
         btn_w = 95
         btn_h = 32
         spacing = 8
 
-        self.buttons.append(Button(
-            pygame.Rect(panel_x, algo_y, btn_w, btn_h), "Solve BFS",
-            lambda: self.start_solver("BFS"), self.font_btn,
-            bg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER
-        ))
-        self.buttons.append(Button(
-            pygame.Rect(panel_x + (btn_w + spacing), algo_y, btn_w, btn_h), "Solve DFS",
-            lambda: self.start_solver("DFS"), self.font_btn,
-            bg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER
-        ))
-        self.buttons.append(Button(
-            pygame.Rect(panel_x + 2 * (btn_w + spacing), algo_y, btn_w, btn_h), "Solve UCS",
-            lambda: self.start_solver("UCS"), self.font_btn,
-            bg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER
-        ))
-        self.buttons.append(Button(
-            pygame.Rect(panel_x + 3 * (btn_w + spacing), algo_y, btn_w, btn_h), "Solve A*",
-            lambda: self.start_solver("A*"), self.font_btn,
-            bg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOVER
-        ))
+        solvers = [
+            ("BFS", "Solve BFS"),
+            ("DFS", "Solve DFS"),
+            ("UCS", "Solve UCS"),
+            ("A*", "Solve A*")
+        ]
+        for i, (name, label) in enumerate(solvers):
+            btn = Button(
+                pygame.Rect(panel_x + i * (btn_w + spacing), algo_y, btn_w, btn_h),
+                label,
+                (lambda n=name: self.start_solver(n)),
+                self.font_btn,
+                bg_color=BTN_PRIMARY,
+                hover_color=BTN_PRIMARY_HOVER
+            )
+            self.btn_solvers[name] = btn
+            self.buttons.append(btn)
 
         # Nhóm 3: Điều khiển Replay lời giải
         replay_y = 390
@@ -294,6 +346,7 @@ class BloxorzApp:
         self.is_playing_replay = False
         self.animator.reset()
         self.board_animator.reset()
+        self.reset_solver_buttons()
 
     def restart_level(self):
         """Khởi động lại màn chơi hiện tại."""
@@ -318,6 +371,7 @@ class BloxorzApp:
             self.is_playing_replay = False
             self.animator.reset()
             self.board_animator.reset()
+            self.reset_solver_buttons()
 
     def start_board_restart_sequence(self):
         """Khởi động chuỗi hoạt ảnh tái lập màn chơi (Board Disintegrate & Rebuild)."""
@@ -326,6 +380,7 @@ class BloxorzApp:
         self.game_won = False
         self.transition_active = False
         self.is_playing_replay = False
+        self.reset_solver_buttons()
 
         # Khôi phục trạng thái ban đầu của bàn cờ và khối Bloxorz
         if self.map_data:
@@ -394,6 +449,16 @@ class BloxorzApp:
         """Kích hoạt chạy thuật toán tìm kiếm trên một luồng nền riêng biệt."""
         if self.is_searching or not self.initial_state:
             return
+
+        self.active_algo = algo_name
+        # Cập nhật màu nút: thuật toán được chọn chuyển màu xanh lá (BTN_SUCCESS), các nút còn lại giữ màu xanh dương (BTN_PRIMARY)
+        for name, btn in self.btn_solvers.items():
+            if name == algo_name:
+                btn.bg_color = BTN_SUCCESS
+                btn.hover_color = BTN_SUCCESS_HOVER
+            else:
+                btn.bg_color = BTN_PRIMARY
+                btn.hover_color = BTN_PRIMARY_HOVER
 
         self.is_searching = True
         self.search_result = None
