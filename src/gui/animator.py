@@ -2,8 +2,8 @@
 Module: animator.py
 Mô tả: Quản lý và dựng hình các hiệu ứng chuyển động (Animation) 3D cho khối Bloxorz:
       1. Rolling Animation: Lăn lật 3D 90 độ quanh trục bản lề (pivot edge) trên mặt sàn
-         với bóng đổ động (dynamic shadow) và đánh sáng bề mặt 3D chân thực.
-      2. Victory Sink Animation: Khối đứng thẳng thụt chìm dần vào lỗ đích phát sáng khi thắng cuộc.
+         với bóng đổ động và đánh sáng bề mặt 3D chân thực theo góc nhìn Bloxorz gốc.
+      2. Victory Sink Animation: Khối đứng thẳng thụt chìm dần vào lòng lỗ đích khi thắng cuộc.
       3. Edge Fall Animation: Khối lật quá đà ra khỏi sàn, mất thăng bằng và rơi tự do
          xoay nhào lộn vào khoảng không hư vô theo gia tốc trọng trường.
       4. Fragile Collapse Animation: Ô cam dễ vỡ nứt sụp, sinh chùm mảnh vỡ hạt (particles)
@@ -24,22 +24,23 @@ from src.gui.renderer import (
     COLOR_BLOCK_TOP,
     COLOR_BLOCK_LEFT,
     COLOR_BLOCK_RIGHT,
+    COLOR_BLOCK_FRONT,
     COLOR_BLOCK_EDGE,
     COLOR_SHADOW,
     COLOR_CUBE0_TOP,
     COLOR_CUBE0_LEFT,
-    COLOR_CUBE0_RIGHT,
+    COLOR_CUBE0_FRONT,
     COLOR_CUBE1_TOP,
     COLOR_CUBE1_LEFT,
-    COLOR_CUBE1_RIGHT,
+    COLOR_CUBE1_FRONT,
     COLOR_FRAGILE_TOP,
     COLOR_FRAGILE_LEFT,
-    COLOR_FRAGILE_RIGHT,
+    COLOR_FRAGILE_FRONT,
 )
 
 
 class Particle:
-    """Hạt mảnh vỡ sàn cam khi ô bị nứt sập."""
+    """Hạt mảnh vỡ sàn cam khi ô bị nứt sụp."""
     def __init__(self, r: float, c: float, z: float):
         self.r = r
         self.c = c
@@ -75,7 +76,7 @@ class BlockAnimator:
     def __init__(self):
         self.state = self.STATE_IDLE
         self.progress = 0.0          # Tiến trình [0.0, 1.0]
-        self.duration = 0.16         # Thời lượng tính bằng giây
+        self.duration = 0.15         # Thời lượng tính bằng giây
         self.elapsed = 0.0
 
         # Dữ liệu khối cho animation
@@ -188,7 +189,7 @@ class BlockAnimator:
         self.particles.clear()
         fr, fc = fragile_cell
         for _ in range(18):
-            self.particles.append(Particle(fr + random.uniform(-0.3, 0.3), fc + random.uniform(-0.3, 0.3), 0.1))
+            self.particles.append(Particle(fr + random.uniform(0.1, 0.9), fc + random.uniform(0.1, 0.9), 0.1))
 
     def update(self, dt: float):
         """Cập nhật tiến trình thời gian và trạng thái animation mỗi frame."""
@@ -222,18 +223,16 @@ class BlockAnimator:
         """
         ori = block.orientation
         if ori == Orientation.STANDING:
-            return (block.r - 0.5, block.r + 0.5, block.c - 0.5, block.c + 0.5, 0.0, 2.0)
+            return (float(block.r), float(block.r + 1), float(block.c), float(block.c + 1), 0.0, 2.0)
         elif ori == Orientation.HORIZONTAL:
-            # Chiếm (r, c) và (r, c + 1)
-            return (block.r - 0.5, block.r + 0.5, block.c - 0.5, block.c + 1.5, 0.0, 1.0)
+            return (float(block.r), float(block.r + 1), float(block.c), float(block.c + 2), 0.0, 1.0)
         elif ori == Orientation.VERTICAL:
-            # Chiếm (r, c) và (r + 1, c)
-            return (block.r - 0.5, block.r + 1.5, block.c - 0.5, block.c + 0.5, 0.0, 1.0)
+            return (float(block.r), float(block.r + 2), float(block.c), float(block.c + 1), 0.0, 1.0)
         elif ori == Orientation.SPLIT:
             cr = block.r if cube_idx == 0 else block.r1
             cc = block.c if cube_idx == 0 else block.c1
-            return (cr - 0.5, cr + 0.5, cc - 0.5, cc + 0.5, 0.0, 1.0)
-        return (0, 0, 0, 0, 0, 0)
+            return (float(cr), float(cr + 1), float(cc), float(cc + 1), 0.0, 1.0)
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     @staticmethod
     def _make_cuboid_vertices(rmin: float, rmax: float, cmin: float, cmax: float, zmin: float, zmax: float):
@@ -293,11 +292,27 @@ class BlockAnimator:
     def _iso_project(
         r: float, c: float, z: float,
         origin_x: int, origin_y: int,
-        tile_w: int, tile_h: int, block_unit_h: int
+        renderer_or_tile_w: Any = None,
+        tile_h: Optional[int] = None,
+        block_unit_h: Optional[int] = None
     ) -> Tuple[int, int]:
         """Chiếu điểm (r, c, z) 3D sang tọa độ màn hình Isometric (x, y)."""
-        x = origin_x + (c - r) * (tile_w / 2.0)
-        y = origin_y + (c + r) * (tile_h / 2.0) - z * block_unit_h
+        if renderer_or_tile_w is not None and hasattr(renderer_or_tile_w, 'grid_to_iso'):
+            return renderer_or_tile_w.grid_to_iso(r, c, origin_x, origin_y, z)
+
+        if renderer_or_tile_w is not None and hasattr(renderer_or_tile_w, 'ux'):
+            ux = renderer_or_tile_w.ux
+            uy = renderer_or_tile_w.uy
+            vx = renderer_or_tile_w.vx
+            vy = renderer_or_tile_w.vy
+            bh = renderer_or_tile_w.bh
+        else:
+            ux, uy = 65.0, -10.3
+            vx, vy = 16.6, 24.6
+            bh = 42.0
+
+        x = origin_x + c * ux + r * vx
+        y = origin_y + c * uy + r * vy - z * bh
         return (int(x), int(y))
 
     @staticmethod
@@ -330,36 +345,37 @@ class BlockAnimator:
         surface: Any,
         verts3d: List[Tuple[float, float, float]],
         origin_x: int, origin_y: int,
-        tile_w: int, tile_h: int, block_unit_h: int,
+        renderer: Any = None,
         is_cube0: bool = False, is_cube1: bool = False,
         draw_shadow: bool = True
     ):
         """
-        Vẽ một hình hộp 3D tùy ý xác định bởi 8 đỉnh với đổ bóng và đổ màu chuẩn xác.
+        Vẽ một hình hộp 3D tùy ý xác định bởi 8 đỉnh với đổ bóng và đổ màu chuẩn Bloxorz.
         """
         if not pygame or surface is None:
             return
 
         # Chiếu 8 đỉnh sang 2D
         pts2d = [
-            self._iso_project(r, c, z, origin_x, origin_y, tile_w, tile_h, block_unit_h)
+            self._iso_project(r, c, z, origin_x, origin_y, renderer)
             for r, c, z in verts3d
         ]
 
-        # 1. Vẽ bóng đổ động trên mặt sàn (z = 0) nếu đáy khối còn gần mặt sàn
+        # 1. Vẽ bóng đổ mềm trên sàn
         if draw_shadow:
-            shadow_z = 0.0
             shadow_pts = []
             for i in [0, 1, 2, 3]:
                 r, c, _ = verts3d[i]
-                shadow_pts.append(self._iso_project(r, c, shadow_z, origin_x, origin_y, tile_w, tile_h, block_unit_h))
+                shadow_pts.append(self._iso_project(r, c, 0.0, origin_x, origin_y, renderer))
             if abs(self._polygon_signed_area_2d(shadow_pts)) > 1.0:
-                shadow_surf = pygame.Surface((tile_w * 4, tile_h * 4), pygame.SRCALPHA)
-                min_sx = min(p[0] for p in shadow_pts)
-                min_sy = min(p[1] for p in shadow_pts)
-                rel_pts = [(p[0] - min_sx + 10, p[1] - min_sy + 10) for p in shadow_pts]
-                pygame.draw.polygon(shadow_surf, COLOR_SHADOW, rel_pts)
-                surface.blit(shadow_surf, (min_sx - 10, min_sy - 10))
+                shadow_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+                # Dịch nhẹ bóng sang phía sau bên phải
+                s_off_pts = [
+                    (p[0] + 4, p[1] - 3)
+                    for p in shadow_pts
+                ]
+                pygame.draw.polygon(shadow_surf, (0, 0, 0, 75), s_off_pts)
+                surface.blit(shadow_surf, (0, 0))
 
         # 6 mặt của khối
         faces_def = [
@@ -373,11 +389,11 @@ class BlockAnimator:
 
         # Bảng màu
         if is_cube0:
-            col_top, col_left, col_right = COLOR_CUBE0_TOP, COLOR_CUBE0_LEFT, COLOR_CUBE0_RIGHT
+            col_top, col_left, col_front = COLOR_CUBE0_TOP, COLOR_CUBE0_LEFT, COLOR_CUBE0_FRONT
         elif is_cube1:
-            col_top, col_left, col_right = COLOR_CUBE1_TOP, COLOR_CUBE1_LEFT, COLOR_CUBE1_RIGHT
+            col_top, col_left, col_front = COLOR_CUBE1_TOP, COLOR_CUBE1_LEFT, COLOR_CUBE1_FRONT
         else:
-            col_top, col_left, col_right = COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_RIGHT
+            col_top, col_left, col_front = COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_FRONT
 
         # Lọc các mặt nhìn thấy được (area > 1e-4) và sắp xếp theo Painter's Algorithm
         visible_faces = []
@@ -389,7 +405,7 @@ class BlockAnimator:
                 cr = sum(p[0] for p in pts_for_face) / 4.0
                 cc = sum(p[1] for p in pts_for_face) / 4.0
                 cz = sum(p[2] for p in pts_for_face) / 4.0
-                depth = (cr + cc) + cz * 0.1
+                depth = cr * 10.0 + cc * 1.0 + cz * 0.1
                 normal = self._compute_face_normal(pts_for_face)
                 visible_faces.append((depth, name, face_pts2d, normal))
 
@@ -400,17 +416,19 @@ class BlockAnimator:
 
             if nz > 0.35:
                 base_col = col_top
-            elif nc > 0.35:
-                base_col = col_right
             elif nr > 0.35:
+                base_col = col_front
+            elif nc < -0.35:
                 base_col = col_left
+            elif nc > 0.35:
+                base_col = tuple(min(255, int(c * 1.05)) for c in col_front)
             elif nz < -0.35:
                 base_col = tuple(max(0, int(c * 0.55)) for c in col_top)
             else:
                 base_col = tuple(max(0, int(c * 0.65)) for c in col_left)
 
-            light_dot = max(0.0, -nr * 0.3 + nc * 0.4 + nz * 0.8)
-            shade_factor = 0.75 + 0.25 * light_dot
+            light_dot = max(0.0, -nr * 0.2 + nc * 0.3 + nz * 0.85)
+            shade_factor = 0.80 + 0.20 * light_dot
             final_col = (
                 min(255, int(base_col[0] * shade_factor)),
                 min(255, int(base_col[1] * shade_factor)),
@@ -429,9 +447,9 @@ class BlockAnimator:
         surface: Any,
         origin_x: int,
         origin_y: int,
-        tile_w: int,
-        tile_h: int,
-        block_unit_h: int
+        renderer: Any = None,
+        tile_h: Optional[int] = None,
+        block_unit_h: Optional[int] = None
     ):
         """Vẽ khung hình animation hiện tại của khối Bloxorz."""
         if self.state == self.STATE_IDLE or self.block is None:
@@ -440,15 +458,15 @@ class BlockAnimator:
         p = self.progress
 
         if self.state == self.STATE_ROLLING:
-            self._render_rolling(surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p)
+            self._render_rolling(surface, origin_x, origin_y, renderer, p)
         elif self.state == self.STATE_FALL_GOAL:
-            self._render_fall_goal(surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p)
+            self._render_fall_goal(surface, origin_x, origin_y, renderer, p)
         elif self.state == self.STATE_FALL_EDGE:
-            self._render_fall_edge(surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p)
+            self._render_fall_edge(surface, origin_x, origin_y, renderer, p)
         elif self.state == self.STATE_FALL_FRAGILE:
-            self._render_fall_fragile(surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p)
+            self._render_fall_fragile(surface, origin_x, origin_y, renderer, p)
 
-    def _render_rolling(self, surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p: float):
+    def _render_rolling(self, surface, origin_x, origin_y, renderer, p: float):
         """Dựng hình khối đang lăn lật 3D 90 độ."""
         t_eased = p * p * (3.0 - 2.0 * p)
         theta = t_eased * (math.pi / 2.0)
@@ -459,7 +477,7 @@ class BlockAnimator:
             rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block)
             verts = self._make_cuboid_vertices(rmin, rmax, cmin, cmax, zmin, zmax)
             rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax)
-            self._render_3d_box(surface, rotated, origin_x, origin_y, tile_w, tile_h, block_unit_h)
+            self._render_3d_box(surface, rotated, origin_x, origin_y, renderer)
         else:
             active_idx = self.cube_index
             other_idx = 1 - active_idx
@@ -471,30 +489,28 @@ class BlockAnimator:
             act_verts = self._make_cuboid_vertices(act_rmin, act_rmax, act_cmin, act_cmax, act_zmin, act_zmax)
             act_rotated = self._rotate_box_vertices(act_verts, self.direction, theta, act_rmin, act_rmax, act_cmin, act_cmax)
 
-            act_center_depth = (act_rmin + act_cmin)
-            other_center_depth = (other_rmin + other_cmin)
+            act_depth = act_rmin * 10.0 + act_cmin
+            other_depth = other_rmin * 10.0 + other_cmin
 
-            if other_center_depth < act_center_depth:
-                self._render_3d_box(surface, other_verts, origin_x, origin_y, tile_w, tile_h, block_unit_h,
+            if other_depth < act_depth:
+                self._render_3d_box(surface, other_verts, origin_x, origin_y, renderer,
                                     is_cube0=(other_idx == 0), is_cube1=(other_idx == 1))
-                self._render_3d_box(surface, act_rotated, origin_x, origin_y, tile_w, tile_h, block_unit_h,
+                self._render_3d_box(surface, act_rotated, origin_x, origin_y, renderer,
                                     is_cube0=(active_idx == 0), is_cube1=(active_idx == 1))
             else:
-                self._render_3d_box(surface, act_rotated, origin_x, origin_y, tile_w, tile_h, block_unit_h,
+                self._render_3d_box(surface, act_rotated, origin_x, origin_y, renderer,
                                     is_cube0=(active_idx == 0), is_cube1=(active_idx == 1))
-                self._render_3d_box(surface, other_verts, origin_x, origin_y, tile_w, tile_h, block_unit_h,
+                self._render_3d_box(surface, other_verts, origin_x, origin_y, renderer,
                                     is_cube0=(other_idx == 0), is_cube1=(other_idx == 1))
 
-    def _render_fall_goal(self, surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p: float):
-        """Khối chìm sâu dần thẳng đứng vào lòng lỗ đích phát sáng và biến mất hoàn toàn."""
+    def _render_fall_goal(self, surface, origin_x, origin_y, renderer, p: float):
+        """Khối chìm sâu dần thẳng đứng vào lòng lỗ đích và biến mất hoàn toàn."""
         if p >= 0.90:
-            return  # Khối đã rớt đủ sâu và biến mất hoàn toàn
+            return  # Đã rớt đủ sâu và biến mất
 
         rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block)
-        # Rơi nhanh dần theo trọng lực xuống sâu dưới mặt sàn (đáy chìm xuống -5.0, đỉnh chìm xuống -3.0)
         z_offset = -5.0 * (p ** 1.6)
 
-        # Thu nhỏ khối dần vào tâm miệng lỗ đích khi chìm sâu (hiệu ứng hút sâu vào hố)
         scale = max(0.1, 1.0 - (p ** 1.3) * 0.7)
         mid_r = (rmin + rmax) / 2.0
         mid_c = (cmin + cmax) / 2.0
@@ -504,9 +520,9 @@ class BlockAnimator:
         s_cmax = mid_c + (cmax - mid_c) * scale
 
         verts = self._make_cuboid_vertices(s_rmin, s_rmax, s_cmin, s_cmax, zmin + z_offset, zmax + z_offset)
-        self._render_3d_box(surface, verts, origin_x, origin_y, tile_w, tile_h, block_unit_h, draw_shadow=False)
+        self._render_3d_box(surface, verts, origin_x, origin_y, renderer, draw_shadow=False)
 
-    def _render_fall_edge(self, surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p: float):
+    def _render_fall_edge(self, surface, origin_x, origin_y, renderer, p: float):
         """Khối lật nghiêng ra mép rồi rơi tự do xoay vòng xuống vực thẳm."""
         rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block, self.cube_index)
         verts = self._make_cuboid_vertices(rmin, rmax, cmin, cmax, zmin, zmax)
@@ -515,7 +531,7 @@ class BlockAnimator:
             local_t = p / 0.35
             theta = local_t * (math.pi / 3.0)
             rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax)
-            self._render_3d_box(surface, rotated, origin_x, origin_y, tile_w, tile_h, block_unit_h)
+            self._render_3d_box(surface, rotated, origin_x, origin_y, renderer)
         else:
             t_fall = (p - 0.35) / 0.65
             theta = (math.pi / 3.0) + t_fall * math.pi * 0.8
@@ -537,9 +553,9 @@ class BlockAnimator:
                 (r + dr_drift, c + dc_drift, z + z_fall)
                 for r, c, z in base_rotated
             ]
-            self._render_3d_box(surface, fallen_verts, origin_x, origin_y, tile_w, tile_h, block_unit_h, draw_shadow=False)
+            self._render_3d_box(surface, fallen_verts, origin_x, origin_y, renderer, draw_shadow=False)
 
-    def _render_fall_fragile(self, surface, origin_x, origin_y, tile_w, tile_h, block_unit_h, p: float):
+    def _render_fall_fragile(self, surface, origin_x, origin_y, renderer, p: float):
         """Khối rơi thẳng đứng khi ô cam bị nứt sập."""
         rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block)
         z_fall = -10.0 * (p ** 2)
@@ -548,16 +564,16 @@ class BlockAnimator:
             (r + tilt, c - tilt, z + z_fall)
             for r, c, z in self._make_cuboid_vertices(rmin, rmax, cmin, cmax, zmin, zmax)
         ]
-        self._render_3d_box(surface, verts, origin_x, origin_y, tile_w, tile_h, block_unit_h, draw_shadow=False)
+        self._render_3d_box(surface, verts, origin_x, origin_y, renderer, draw_shadow=False)
 
     def render_overlays(
         self,
         surface: Any,
         origin_x: int,
         origin_y: int,
-        tile_w: int,
-        tile_h: int,
-        block_unit_h: int
+        renderer: Any = None,
+        tile_h: Optional[int] = None,
+        block_unit_h: Optional[int] = None
     ):
         """
         Vẽ các hiệu ứng phụ bề mặt (hạt bụi cam nứt vỡ, quầng sáng đích bùng nổ).
@@ -568,8 +584,9 @@ class BlockAnimator:
         # 1. Vẽ quầng sáng đích khi thắng cuộc
         if self.state == self.STATE_FALL_GOAL and self.goal_cell:
             gr, gc = self.goal_cell
-            gx, gy = self._iso_project(gr, gc, 0.0, origin_x, origin_y, tile_w, tile_h, block_unit_h)
-            flare_radius = int(tile_w // 2 + math.sin(self.progress * math.pi) * 22)
+            gx, gy = self._iso_project(gr + 0.5, gc + 0.5, 0.0, origin_x, origin_y, renderer)
+            scale_val = renderer.scale if hasattr(renderer, 'scale') else 65.0
+            flare_radius = int(scale_val * 0.6 + math.sin(self.progress * math.pi) * 25)
             if flare_radius > 0:
                 glow_surf = pygame.Surface((flare_radius * 2 + 10, flare_radius + 10), pygame.SRCALPHA)
                 alpha = int(180 * math.sin(self.progress * math.pi))
@@ -583,7 +600,7 @@ class BlockAnimator:
         # 2. Vẽ các hạt mảnh vỡ cam
         if self.particles:
             for pt in self.particles:
-                px, py = self._iso_project(pt.r, pt.c, max(0.0, pt.z), origin_x, origin_y, tile_w, tile_h, block_unit_h)
+                px, py = self._iso_project(pt.r, pt.c, max(0.0, pt.z), origin_x, origin_y, renderer)
                 alpha_val = int(255 * pt.life)
                 particle_surf = pygame.Surface((pt.size * 2, pt.size * 2), pygame.SRCALPHA)
                 pygame.draw.circle(
