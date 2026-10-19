@@ -2,19 +2,29 @@
 
 Đồ án Cơ sở AI
 
-🎥 **Video Demo:** [Xem trên YouTube](https://youtu.be/bloxorzsolver)
+🎥 **Video Demo:** [Xem trên YouTube](https://youtu.be/bloxorzsolver)  
 
 ---
 
 ## 1. Giới thiệu tổng quan
 Dự án giải bài toán game **Bloxorz** bằng các giải thuật tìm kiếm trong không gian trạng thái:
 - **Cơ chế game đầy đủ:** Ô thường, ô cam dễ vỡ (Fragile), hố đích (Goal), hệ thống cầu nối (Bridges), 3 loại công tắc (Tròn mềm, X nặng, Phân thân) và cơ chế tách - ghép 2 khối lập phương $1 \times 1 \times 1$.
-- **4 Thuật toán tìm kiếm:**
-  - **BFS:** Tìm đường ngắn nhất theo số bước (tối ưu số bước).
-  - **DFS / IDS:** Tìm kiếm theo chiều sâu kết hợp tập đã duyệt (Visited Set) chống lặp chu trình.
-  - **UCS:** Tìm đường đi tối ưu theo hàm chi phí phi đồng nhất.
-  - **A\*:** Tìm kiếm theo kinh nghiệm với hàm heuristic $h(n)$ chấp nhận được (Admissible) và nhất quán (Consistent).
-- **Giao diện 3D Isometric (Pygame):** Đồ họa 3D khối hộp có độ dày, bóng đổ, tự động mô phỏng khối lăn về đích khi bấm giải (theo đúng FAQ môn học), hỗ trợ chơi thủ công và tua bước.
+- **4 Thuật toán tìm kiếm độc lập:**
+  - **BFS:** Tìm đường ngắn nhất theo số bước (tối ưu số bước đi tuyệt đối với kỹ thuật Goal Test on Generation).
+  - **DFS / IDS:** Tìm kiếm theo chiều sâu kết hợp tập đã duyệt (Visited Set) chống lặp chu trình, hỗ trợ tìm kiếm sâu dần (Iterative Deepening Search).
+  - **UCS:** Tìm đường đi tối ưu theo hàm chi phí phi đồng nhất (ưu tiên né ô cam dễ vỡ, hạn chế dựng đứng).
+  - **A\*:** Tìm kiếm có thông tin với hàm Heuristic $h(n)$ khoảng cách lưới nới lỏng (Relaxed Grid BFS Distance) đảm bảo tính chấp nhận được (Admissible) và nhất quán đơn điệu (Consistent).
+- **Giao diện 3D Isometric chuẩn phong cách Bloxorz kinh điển (Pygame):**
+  - **Góc nhìn 3D & Nền đỏ huyền thoại:** Hệ trục cơ sở $(U, V, H, D)$ theo góc nhìn chuẩn của game Bloxorz gốc, nền dải gradient đỏ rực rỡ, tự động co giãn và căn giữa thích ứng (Adaptive scaling) cho toàn bộ 33 màn chơi.
+  - **Hệ thống hoạt ảnh 3D chuyển động chân thực (Animation Engine):**
+    - *Rolling Animation:* Lăn lật 3D 90° quanh trục mép sàn mượt mà theo từng khung hình (cả khi chơi thủ công và Replay tự động).
+    - *Victory Sink:* Khối đứng thẳng thụt chìm dần vào lòng hố đích khi chiến thắng.
+    - *Edge Fall:* Khối lật quá mép rơi nhào lộn theo gia tốc trọng trường xuống vực thẳm.
+    - *Fragile Collapse:* Ô cam sụp nứt kèm hiệu ứng chùm hạt mảnh vỡ (`Particle`) văng tung tóe và khối rơi tự do.
+    - *Board Restart Animation:* Chuỗi 5 giai đoạn sụp đổ và tái lập sàn (Fall $\to$ Wait $\to$ Rise $\to$ Flash $\to$ Spawn) khi thua hoặc khởi động lại (bấm phím bất kỳ hoặc click để bỏ qua ngay).
+    - *Stage Transition Modal:* Hộp thoại chúc mừng chuyển màn tự động đếm giờ hoặc bấm phím để tiếp tục.
+  - **Bộ dựng font chữ an toàn (SafeFont):** Sử dụng Pillow và bộ nhớ đệm LRU Cache đạt 60 FPS mượt mà, hỗ trợ tiếng Việt Unicode sắc nét, chống lỗi Circular Import / Segmentation Fault trên Python 3.14.
+  - **Hỗ trợ toàn màn hình (Fullscreen):** Nút phóng to / thu nhỏ hoặc phím **F11** / nút Maximize của cửa sổ.
 
 ---
 
@@ -28,25 +38,31 @@ Source/
 │   │   ├── block.py            # Trạng thái khối (Đứng, Ngang, Dọc, Phân thân) & phép lăn
 │   │   ├── game_state.py       # Quản lý trạng thái, cầu, công tắc, hàm chi phí
 │   │   └── map_loader.py       # Đọc bản đồ và cấu hình công tắc - cầu nối (ManaBoa)
-│   ├── solvers/                # Triển khai các thuật toán
+│   ├── solvers/                # Triển khai các thuật toán tìm kiếm
 │   │   ├── base_solver.py      # Cấu trúc lưu trữ kết quả & chỉ số đo lường
 │   │   ├── bfs.py              # BFS (Goal test on generation)
-│   │   ├── dfs.py              # DFS & IDS
-│   │   ├── ucs.py              # Uniform-Cost Search
-│   │   └── astar.py            # A* với Heuristic khoảng cách lưới nới lỏng
-│   └── gui/                    # Giao diện đồ họa Pygame
-│       ├── renderer.py         # Dựng hình 3D Isometric, đa giác 3 chiều, đổ bóng
-│       └── app.py              # Xử lý sự kiện, đa luồng solver, tự động chạy lời giải
+│   │   ├── dfs.py              # DFS & IDS (Depth-Limited & Iterative Deepening)
+│   │   ├── ucs.py              # Uniform-Cost Search (Ưu tiên chi phí tích lũy g(n))
+│   │   ├── astar.py            # A* với Heuristic khoảng cách lưới nới lỏng
+│   │   └── heuristics.py       # Tính toán hàm Heuristic Admissible & Consistent
+│   └── gui/                    # Giao diện đồ họa Pygame & Animation 3D
+│       ├── renderer.py         # Dựng hình 3D Isometric chuẩn Bloxorz, nền gradient đỏ, adaptive scaling
+│       ├── animator.py         # Hoạt ảnh lăn khối 90°, thụt hố đích, rơi vực và sập sàn cam nứt vỡ
+│       ├── board_animator.py   # Chuỗi hoạt ảnh tái lập màn chơi (Board Disintegration & Rebuild)
+│       ├── safe_font.py        # Bộ dựng font chữ an toàn bằng Pillow, cache tốc độ cao 60 FPS
+│       └── app.py              # Giao diện chính, đa luồng solver, điều khiển replay, chuyển màn
 ├── experiments/                # Kết quả đánh giá hiệu năng
 │   ├── results.csv             # Bảng dữ liệu thô (CSV)
 │   ├── experiment_report.md    # Bảng số liệu tổng hợp Markdown
 │   └── plots/                  # 4 biểu đồ PNG (Thời gian, Bộ nhớ, Nút mở rộng, Số bước)
-├── tests/                      # Bộ kiểm thử tự động
-│   ├── test_core.py            # Unit test 12 phép lăn và luật va chạm cơ bản
+├── tests/                      # Bộ kiểm thử tự động (20 test cases, pass 100%)
+│   ├── test_core.py            # 10 Unit test kiểm tra logic lăn khối, va chạm, phân thân, công tắc
+│   ├── test_animator.py        # 7 Unit test kiểm tra góc quay 3D và lifecycle animation của khối
+│   ├── test_board_animator.py  # 3 Unit test kiểm tra chuỗi 5 giai đoạn tái lập bàn cờ
 │   └── verify_all_levels.py    # Kiểm chứng độ tối ưu và tính hợp lệ trên cả 33 màn
 ├── main.py                     # File chạy chính (Mặc định mở GUI, hỗ trợ CLI)
 ├── experiment.py               # Script chạy thực nghiệm tự động trên 4 nhóm màn chơi
-├── requirements.txt            # Thư viện phụ thuộc (pygame, matplotlib, numpy)
+├── requirements.txt            # Thư viện phụ thuộc (pygame, matplotlib, numpy, Pillow)
 └── README.md                   # Hướng dẫn sử dụng dự án
 ```
 
@@ -55,8 +71,8 @@ Source/
 ## 3. Cài đặt & Khởi chạy
 
 ### 3.1. Cài đặt môi trường
-- Python 3.8+ (khuyên dùng Python 3.10 – 3.12).
-- Cài đặt thư viện:
+- Yêu cầu Python $\ge 3.8$ (khuyên dùng Python 3.10 – 3.12).
+- Cài đặt các thư viện phụ thuộc:
 ```bash
 pip install -r requirements.txt
 ```
@@ -67,11 +83,13 @@ python main.py
 ```
 - **Thao tác trên GUI:**
   - Nhấp chọn thuật toán: **Solve BFS**, **Solve DFS**, **Solve UCS**, **Solve A\***.
-  - Khi tìm thấy lời giải, **khối sắt sẽ tự động lăn từng bước về đích** (theo đúng giải đáp FAQ của Thầy).
+  - Quá trình tìm kiếm chạy ngầm trên **Background Thread**, giữ giao diện đạt 60 FPS mượt mà không bị treo.
+  - Khi tìm thấy lời giải, **khối sắt sẽ tự động lăn từng bước về đích** kèm hiệu ứng lăn 3D mượt mà.
   - Sử dụng các nút điều khiển lời giải: `> Play` / `|| Pause`, `< Back`, `Step >`, tốc độ `1x`, `2x`.
-  - Nút **New Game** để chuyển màn, **Restart** để đặt lại màn.
+  - Nút **New Game** để chuyển màn, **Restart** để đặt lại màn chơi.
   - **Phóng to toàn màn hình:** Bấm nút **Fullscreen** trên góc phải (hoặc phím **F11** / nút Maximize của cửa sổ), bấm **Esc** hoặc **F11** để thu nhỏ.
-  - **Phím chơi thủ công:** Phím mũi tên hoặc `W/A/S/D` để lăn, phím `Space` để đổi khối khi phân thân, phím `R` để chơi lại, phím `U` để đi lùi (undo).
+  - **Phím chơi thủ công:** Phím mũi tên hoặc `W/A/S/D` để lăn khối, phím `Space` để đổi khối khi phân thân, phím `R` để chơi lại, phím `U` để đi lùi (undo).
+  - Khi khối rơi khỏi sàn, bàn cờ tự động chạy hoạt ảnh sụp đổ và lắp ráp lại (bấm phím bất kỳ hoặc click chuột để tiếp tục ngay).
 
 ### 3.3. Chạy qua dòng lệnh (CLI)
 Cú pháp:
@@ -87,15 +105,15 @@ python main.py 08 A*
 ```
 
 ### 3.4. Chạy kiểm thử & Thực nghiệm
-- Chạy toàn bộ Unit Test:
+- Chạy toàn bộ 20 bài Unit Test tự động:
   ```bash
   python -m unittest discover tests
   ```
-- Chạy kiểm chứng trên toàn bộ 33 màn:
+- Chạy kiểm chứng trên toàn bộ 33 màn chơi của game gốc:
   ```bash
   python tests/verify_all_levels.py
   ```
-- Chạy đo đạc thực nghiệm và vẽ biểu đồ:
+- Chạy đo đạc thực nghiệm và vẽ 4 biểu đồ so sánh:
   ```bash
   python experiment.py
   ```
@@ -107,12 +125,12 @@ python main.py 08 A*
 - **Trạng thái ($s$):** Cặp `(BlockState, BridgeState)`
   - `BlockState`:
     - Khối nguyên: `(Orientation, r, c)` với `Orientation` $\in$ {`STANDING`, `HORIZONTAL`, `VERTICAL`}.
-    - Khối phân thân: `(SPLIT, sorted((r0, c0), (r1, c1)))`.
-  - `BridgeState`: `tuple` boolean thể hiện trạng thái Đóng/Mở của từng cây cầu.
+    - Khối phân thân: `(SPLIT, sorted((r0, c0), (r1, c1)))` theo thứ tự từ điển triệt tiêu nhánh đối xứng.
+  - `BridgeState`: `tuple` boolean bất biến thể hiện trạng thái Đóng/Mở của từng cây cầu, giúp băm trạng thái và tra cứu $O(1)$ mà không cần copy ma trận bản đồ.
 - **Không gian hành động ($A$):** 4 hướng {`UP`, `DOWN`, `LEFT`, `RIGHT`}. Khi phân thân, hành động có dạng `(cube_index, direction)`.
 - **Luật chuyển trạng thái:**
   - Khối đứng lăn sẽ thành khối nằm (chiếm 2 ô). Khối nằm lăn dọc theo trục dài sẽ thành khối đứng (chiếm 1 ô), lăn theo trục ngắn sẽ giữ nguyên hướng nằm.
-  - Khối đứng trên ô cam (Fragile - số 2) sẽ làm sập sàn $\to$ hành động không hợp lệ. Khối nằm hoặc khối $1 \times 1 \times 1$ đi qua an toàn.
+  - Khối đứng trên ô cam (Fragile - số 2) sẽ làm sập sàn $\to$ hành động không hợp lệ. Khối nằm hoặc khối nhỏ $1 \times 1 \times 1$ đi qua an toàn.
   - Khi 2 khối phân thân đứng ở hai ô kề nhau, chúng tự động hợp nhất thành khối $1 \times 1 \times 2$.
 - **Kiểm tra đích (Goal Test):** Khối ở trạng thái `STANDING` tại tọa độ ô đích `(goal_r, goal_c)`.
 
@@ -122,26 +140,27 @@ python main.py 08 A*
 
 ### 5.1. BFS (Breadth-First Search)
 - Sử dụng hàng đợi `collections.deque` FIFO.
-- Kiểm tra đích ngay khi sinh nút (Goal Test on Generation) để giảm 1 tầng duyệt, đảm bảo tối ưu số bước đi.
+- Kiểm tra đích ngay khi sinh nút (Goal Test on Generation) để giảm 1 tầng duyệt, đảm bảo tối ưu số bước đi tuyệt đối.
 
 ### 5.2. DFS & IDS
 - Sử dụng ngăn xếp LIFO và tập `visited` lưu trạng thái đã duyệt trên nhánh để tránh lặp vô tận.
-- Hỗ trợ giải thuật IDS (Iterative Deepening Search) tăng dần giới hạn độ sâu.
+- Hỗ trợ giải thuật IDS (Iterative Deepening Search) tăng dần giới hạn độ sâu, kết hợp ưu điểm tiết kiệm bộ nhớ của DFS với tính tối ưu số bước của BFS.
 
 ### 5.3. UCS (Uniform-Cost Search)
 - Sử dụng hàng đợi ưu tiên `heapq` theo chi phí tích lũy $g(n)$.
+- Kiểm tra đích khi mở rộng nút (Goal Test on Expansion) bảo đảm tính tối ưu về chi phí.
 - **Hàm chi phí phi đồng nhất (Non-uniform cost):**
   $$c(s \to s') = 1.0 + \text{Penalty}_{\text{fragile}} + \text{Penalty}_{\text{standing}}$$
   - Chi phí cơ bản: $1.0$ cho mỗi bước.
-  - Phạt ô cam ($\text{Penalty}_{\text{fragile}} = +1.0$): Phạt khi lăn qua ô cam nhằm hạn chế rủi ro sập sàn và tránh giới hạn đường đi tiếp theo.
-  - Phạt dựng đứng ($\text{Penalty}_{\text{standing}} = +0.2$): Phạt hành vi dựng đứng do nâng trọng tâm và quán tính lớn hơn lăn nằm.
+  - Phạt ô cam ($\text{Penalty}_{\text{fragile}} = +1.0$): Phạt khi lăn qua ô cam nhằm ưu tiên đường đi an toàn, giảm thiểu rủi ro sập sàn.
+  - Phạt dựng đứng ($\text{Penalty}_{\text{standing}} = +0.2$): Phạt hành vi dựng đứng do nâng trọng tâm và tiêu hao quán tính lớn hơn lăn nằm.
 
 ### 5.4. A\* Search & Hàm Heuristic
 - **Hàm Heuristic:** $h(s) = \text{Relaxed Grid BFS Distance} + \text{Orientation Penalty}$
   - *Relaxed Grid Distance:* Tính khoảng cách ngắn nhất từ mọi ô trên lưới về đích thông qua 1 lần BFS ngược từ ô đích (coi các công tắc phân thân như cạnh dịch chuyển 0-chi phí). Vì mỗi bước khối dịch chuyển tối đa 2 ô:
     $$h_1(s) = \left\lceil \frac{D_{\text{grid}}}{2} \right\rceil$$
   - *Orientation Penalty:* Khối nằm đè lên đích chưa thể thắng ngay mà phải lật ra rồi lật lại để đứng ($\to h(s) \ge 2.0$).
-- **Tính chất:** $h(s)$ được đảm bảo **chấp nhận được (Admissible)** và **nhất quán (Consistent)**, tức $h(s) \le c(s, a, s') + h(s')$. Lời giải của A\* luôn bảo đảm tối ưu tuyệt đối.
+- **Tính chất:** $h(s)$ được chứng minh **chấp nhận được (Admissible)** và **nhất quán đơn điệu (Monotonic Consistent)**, tức $h(s) \le c(s, a, s') + h(s')$. Lời giải của A\* luôn bảo đảm tối ưu tuyệt đối mà không cần mở lại các nút trong tập đóng.
 
 ---
 
@@ -166,6 +185,6 @@ Chạy thử nghiệm trên 13 màn chơi đại diện cho 4 nhóm độ khó:
 | | `map15` | **57** bước (0.272s) | 436 bước (0.068s) | 59.0 (2680 nút) | **59.0 (1549 nút)** |
 
 > **Nhận xét chính:**
-> 1. **BFS** luôn tìm ra số bước đi ngắn nhất.
+> 1. **BFS** luôn tìm ra số bước đi ngắn nhất tuyệt đối.
 > 2. **UCS** và **A\*** luôn tìm ra cùng một giải pháp có tổng chi phí nhỏ nhất. Trên các màn có ô cam (như `map13`), UCS và A\* chủ động đi đường vòng để né ô cam (chi phí 59.4 < chi phí 60.0 của BFS).
-> 3. **A\*** mở rộng ít nút hơn đáng kể so với UCS và BFS (ví dụ tại `map08`: A\* chỉ mở 97 nút so với 595 nút của UCS, giảm hơn 83% không gian duyệt).
+> 3. **A\*** mở rộng ít nút hơn đáng kể so với UCS và BFS (ví dụ tại `map08`: A\* chỉ mở 97 nút so với 595 nút của UCS, giảm hơn 83.7% không gian duyệt).

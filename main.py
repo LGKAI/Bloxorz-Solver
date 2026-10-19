@@ -163,6 +163,10 @@ def main():
         print("     Thuật toán: BFS, DFS, IDS, UCS, A*")
     else:
         # Mặc định mở giao diện đồ họa GUI Pygame
+        # Áp dụng SafeFont để phòng chống tuyệt đối lỗi Segfault và Circular Import trên Python 3.14
+        from src.gui.safe_font import patch_pygame_font
+        patch_pygame_font()
+
         from src.gui.app import BloxorzApp
         levels_dir = os.path.join(CURRENT_DIR, "levels")
         app = BloxorzApp(levels_dir=levels_dir)

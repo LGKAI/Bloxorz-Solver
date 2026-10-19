@@ -12,6 +12,7 @@ import os
 import sys
 import glob
 import time
+import re
 import threading
 import pygame
 from typing import List, Optional, Dict, Any, Tuple
@@ -19,7 +20,13 @@ from typing import List, Optional, Dict, Any, Tuple
 from src.core.block import BlockState, Orientation, Direction
 from src.core.map_loader import MapData, load_map_from_file
 from src.core.game_state import GameState
+from src.gui.safe_font import patch_pygame_font, get_safe_font
 from src.gui.renderer import IsoRenderer
+from src.gui.animator import BlockAnimator
+from src.gui.board_animator import BoardRestartAnimator
+
+# Áp dụng SafeFont để phòng ngừa triệt để lỗi segfault của pygame trên Python 3.14
+patch_pygame_font()
 from src.solvers import (
     SearchResult,
     solve_bfs,
@@ -55,10 +62,10 @@ class Button:
 
     def __init__(
         self,
-        rect: pygame.Rect,
+        rect: Any,
         text: str,
         callback,
-        font: pygame.font.Font,
+        font: Any,
         bg_color=BTN_DEFAULT,
         hover_color=BTN_HOVER,
         text_color=TEXT_WHITE,
@@ -113,19 +120,27 @@ class BloxorzApp:
         self.levels_dir = levels_dir
         self.level_files = sorted(glob.glob(os.path.join(levels_dir, "*.txt")))
         if not self.level_files:
-            # Dự phòng thư mục hiện tại
             self.level_files = sorted(glob.glob("levels/*.txt"))
+        if not self.level_files:
+            # Tìm theo thư mục tương đối của project
+            base_levels = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "levels")
+            self.level_files = sorted(glob.glob(os.path.join(base_levels, "*.txt")))
         self.current_level_idx = 0
 
-        # Khởi tạo Renderer
+        # Khởi tạo Renderer & Animator
         self.renderer = IsoRenderer(self.screen)
+        self.animator = BlockAnimator()
+        self.board_animator = BoardRestartAnimator()
 
-        # Khởi tạo font chữ
-        self.font_title = pygame.font.SysFont("segoeui", 20, bold=True)
-        self.font_h2 = pygame.font.SysFont("segoeui", 16, bold=True)
-        self.font_body = pygame.font.SysFont("segoeui", 13)
-        self.font_btn = pygame.font.SysFont("segoeui", 13, bold=True)
-        self.font_small = pygame.font.SysFont("segoeui", 11)
+        # Khởi tạo font chữ an toàn bằng SafeFont
+        self.font_title = get_safe_font("segoeui", 20, bold=True)
+        self.font_h2 = get_safe_font("segoeui", 16, bold=True)
+        self.font_body = get_safe_font("segoeui", 13)
+        self.font_btn = get_safe_font("segoeui", 13, bold=True)
+        self.font_small = get_safe_font("segoeui", 11)
+        self.font_stage_badge = get_safe_font("segoeui", 14, bold=True)
+        self.font_stage_huge = get_safe_font("segoeui", 42, bold=True)
+        self.font_stage_sub = get_safe_font("segoeui", 14)
 
         # Trạng thái game hiện tại
         self.map_data: Optional[MapData] = None
@@ -134,6 +149,14 @@ class BloxorzApp:
         self.move_history: List[GameState] = []
         self.game_over = False
         self.game_won = False
+
+        # Trạng thái chuyển màn (Stage Transition)
+        self.transition_active = False
+        self.transition_timer = 0.0
+        self.transition_duration = 1.8
+        self.next_stage_title = ""
+        self.next_stage_subtitle = ""
+        self.is_all_cleared = False
 
         # Trạng thái giải thuật và Replay
         self.search_result: Optional[SearchResult] = None
@@ -246,6 +269,7 @@ class BloxorzApp:
         file_path = self.level_files[self.current_level_idx]
 
         self.map_data = load_map_from_file(file_path)
+        self.renderer.compute_layout(self.map_data, view_w=820, view_h=self.height)
         init_block = BlockState(
             Orientation.STANDING,
             self.map_data.start_pos[0],
@@ -260,21 +284,68 @@ class BloxorzApp:
         self.move_history = [self.initial_state]
         self.game_over = False
         self.game_won = False
+        self.transition_active = False
+        self.transition_timer = 0.0
+        self.is_all_cleared = False
         self.search_result = None
         self.replay_states = []
         self.replay_actions = []
         self.replay_idx = 0
         self.is_playing_replay = False
+        self.animator.reset()
+        self.board_animator.reset()
 
     def restart_level(self):
         """Khởi động lại màn chơi hiện tại."""
-        if self.initial_state:
+        if self.map_data:
+            init_block = BlockState(
+                Orientation.STANDING,
+                self.map_data.start_pos[0],
+                self.map_data.start_pos[1]
+            )
+            self.initial_state = GameState(
+                init_block,
+                self.map_data.initial_bridges,
+                self.map_data
+            )
             self.game_state = self.initial_state
             self.move_history = [self.initial_state]
             self.game_over = False
             self.game_won = False
+            self.transition_active = False
+            self.transition_timer = 0.0
             self.replay_idx = 0
             self.is_playing_replay = False
+            self.animator.reset()
+            self.board_animator.reset()
+
+    def start_board_restart_sequence(self):
+        """Khởi động chuỗi hoạt ảnh tái lập màn chơi (Board Disintegrate & Rebuild)."""
+        self.animator.reset()
+        self.game_over = False
+        self.game_won = False
+        self.transition_active = False
+        self.is_playing_replay = False
+
+        # Khôi phục trạng thái ban đầu của bàn cờ và khối Bloxorz
+        if self.map_data:
+            init_block = BlockState(
+                Orientation.STANDING,
+                self.map_data.start_pos[0],
+                self.map_data.start_pos[1]
+            )
+            self.initial_state = GameState(
+                init_block,
+                self.map_data.initial_bridges,
+                self.map_data
+            )
+            self.game_state = self.initial_state
+            self.move_history = [self.initial_state]
+
+        def on_rebuild_complete():
+            self.restart_level()
+
+        self.board_animator.start(self.map_data, on_complete=on_rebuild_complete)
 
     def new_game(self):
         """New Game: quay về màn đầu tiên và bắt đầu chơi lại từ đầu."""
@@ -288,11 +359,36 @@ class BloxorzApp:
 
     def undo_move(self):
         """Lùi lại một bước đi thủ công."""
+        self.animator.reset()
+        self.transition_active = False
+        self.transition_timer = 0.0
         if len(self.move_history) > 1:
             self.move_history.pop()
             self.game_state = self.move_history[-1]
             self.game_over = False
             self.game_won = self.game_state.is_goal()
+
+    def trigger_stage_transition(self):
+        """Kích hoạt màn hình chuyển cảnh sau khi khối đã chìm sâu và biến mất trong lỗ đích."""
+        self.game_won = True
+        next_idx = self.current_level_idx + 1
+        if next_idx < len(self.level_files):
+            filename = os.path.basename(self.level_files[next_idx])
+            match = re.search(r'\d+', filename)
+            if match:
+                num = int(match.group())
+                self.next_stage_title = f"MÀN {num:02d}"
+            else:
+                self.next_stage_title = f"MÀN {next_idx + 1:02d}"
+            self.next_stage_subtitle = "Chuẩn bị bước vào màn chơi tiếp theo..."
+            self.is_all_cleared = False
+        else:
+            self.next_stage_title = "HOÀN THÀNH TẤT CẢ MÀN CHƠI!"
+            self.next_stage_subtitle = "Chúc mừng bạn đã phá đảo toàn bộ 33 màn Bloxorz!"
+            self.is_all_cleared = True
+
+        self.transition_active = True
+        self.transition_timer = 0.0
 
     def start_solver(self, algo_name: str):
         """Kích hoạt chạy thuật toán tìm kiếm trên một luồng nền riêng biệt."""
@@ -336,17 +432,57 @@ class BloxorzApp:
     def toggle_play_replay(self):
         if not self.replay_states:
             return
+        if self.animator.is_animating():
+            self.animator.finish_now()
         self.is_playing_replay = not self.is_playing_replay
         self.last_replay_time = time.time()
         self.btn_play_pause.text = "|| Pause" if self.is_playing_replay else "> Play"
 
     def step_forward_replay(self):
-        if self.replay_states and self.replay_idx < len(self.replay_states) - 1:
+        if not self.replay_states or self.replay_idx >= len(self.replay_states) - 1:
+            return
+        if self.animator.is_animating():
+            self.animator.finish_now()
+
+        action = self.replay_actions[self.replay_idx]
+        nxt_state = self.replay_states[self.replay_idx + 1]
+        cur_block = self.replay_states[self.replay_idx].block
+
+        c_idx = 0
+        act_dir = None
+        if isinstance(action, Direction):
+            act_dir = action
+        elif isinstance(action, tuple) and len(action) == 2:
+            c_idx, act_dir = action
+
+        if act_dir:
+            def on_forward_step_done():
+                self.replay_idx += 1
+                self.game_state = nxt_state
+                if nxt_state.is_goal():
+                    self.animator.start_fall_goal(
+                        nxt_state.block,
+                        self.map_data.goal_pos,
+                        duration=0.8,
+                        on_complete=self.trigger_stage_transition
+                    )
+                else:
+                    self.game_won = False
+
+            self.animator.start_roll(
+                cur_block,
+                act_dir,
+                cube_index=c_idx,
+                duration=0.15,
+                on_complete=on_forward_step_done
+            )
+        else:
             self.replay_idx += 1
-            self.game_state = self.replay_states[self.replay_idx]
+            self.game_state = nxt_state
             self.game_won = self.game_state.is_goal()
 
     def step_backward_replay(self):
+        self.animator.reset()
         if self.replay_states and self.replay_idx > 0:
             self.replay_idx -= 1
             self.game_state = self.replay_states[self.replay_idx]
@@ -364,24 +500,83 @@ class BloxorzApp:
 
     def handle_manual_move(self, direction: Direction):
         """Thực hiện lăn khối khi người chơi bấm phím điều khiển."""
-        if self.game_over or self.game_won or not self.game_state:
+        if self.game_over or self.game_won or not self.game_state or self.board_animator.is_animating():
             return
 
-        if self.game_state.block.orientation != Orientation.SPLIT:
+        # Nếu đang có animation dở:
+        if self.animator.is_animating():
+            # Nếu đang rơi vực thẳm hoặc rơi vào đích thì bỏ qua phím di chuyển
+            if self.animator.state != BlockAnimator.STATE_ROLLING:
+                return
+            # Chỉ hoàn tất nhanh khi đang lăn thông thường để tránh nghẽn phím
+            self.animator.finish_now()
+            if self.game_over or self.game_won:
+                return
+
+        current_block = self.game_state.block
+        active_idx = 0
+        if current_block.orientation != Orientation.SPLIT:
             nxt = self.game_state.transition(direction)
         else:
-            # Di chuyển khối đang được chọn (active_cube)
-            active_idx = self.game_state.block.active_cube
+            active_idx = current_block.active_cube
             nxt = self.game_state.transition((active_idx, direction))
 
-        if nxt is None:
-            # Khối lăn ra ngoài sàn hoặc rơi vỡ ô cam
-            self.game_over = True
+        if nxt is not None:
+            # Di chuyển hợp lệ -> kích hoạt rolling animation
+            def on_manual_roll_done():
+                self.game_state = nxt
+                self.move_history.append(nxt)
+                if nxt.is_goal():
+                    self.animator.start_fall_goal(
+                        nxt.block,
+                        self.map_data.goal_pos,
+                        duration=0.8,
+                        on_complete=self.trigger_stage_transition
+                    )
+
+            self.animator.start_roll(
+                current_block,
+                direction,
+                cube_index=active_idx,
+                duration=0.15,
+                on_complete=on_manual_roll_done
+            )
         else:
-            self.game_state = nxt
-            self.move_history.append(nxt)
-            if nxt.is_goal():
-                self.game_won = True
+            # Di chuyển thất bại -> kiểm tra rơi do ô cam vỡ hay rơi mép sàn
+            is_fragile = False
+            fragile_cell = None
+            if current_block.orientation != Orientation.SPLIT:
+                try:
+                    test_rolled = current_block.roll(direction)
+                    if test_rolled.orientation == Orientation.STANDING:
+                        r, c = test_rolled.r, test_rolled.c
+                        if 0 <= r < self.map_data.rows and 0 <= c < self.map_data.cols:
+                            if self.map_data.board[r][c] == 2:
+                                is_fragile = True
+                                fragile_cell = (r, c)
+                except Exception:
+                    pass
+
+            def on_fall_done():
+                # Khi rơi xong (thua cuộc) -> kích hoạt chuỗi hoạt ảnh tái lập màn chơi
+                self.start_board_restart_sequence()
+
+            if is_fragile and fragile_cell:
+                self.animator.start_fall_fragile(
+                    current_block,
+                    fragile_cell,
+                    duration=0.65,
+                    on_complete=on_fall_done
+                )
+            else:
+                self.animator.start_fall_edge(
+                    current_block,
+                    direction,
+                    cube_index=active_idx,
+                    duration=0.65,
+                    on_complete=on_fall_done
+                )
+
 
     def run(self):
         """Vòng lặp chính xử lý sự kiện và vẽ khung hình (Frame Loop)."""
@@ -393,18 +588,65 @@ class BloxorzApp:
             pulse_val += dt
             mouse_pos = pygame.mouse.get_pos()
 
+            # Cập nhật tiến trình Animation mỗi frame
+            self.animator.update(dt)
+            self.board_animator.update(dt)
+
+            # Cập nhật chuyển màn tự động
+            if self.transition_active:
+                self.transition_timer += dt
+                if self.transition_timer >= self.transition_duration:
+                    self.transition_active = False
+                    if not self.is_all_cleared:
+                        self.next_level()
+
             # 1. Cập nhật Replay tự động nếu đang bật
             if self.is_playing_replay and self.replay_states:
                 now = time.time()
-                if now - self.last_replay_time >= self.replay_speed:
+                if not self.animator.is_animating() and (now - self.last_replay_time >= self.replay_speed):
                     self.last_replay_time = now
                     if self.replay_idx < len(self.replay_states) - 1:
-                        self.replay_idx += 1
-                        self.game_state = self.replay_states[self.replay_idx]
-                        if self.game_state.is_goal():
-                            self.game_won = True
-                            self.is_playing_replay = False
-                            self.btn_play_pause.text = "> Play"
+                        action = self.replay_actions[self.replay_idx]
+                        nxt_state = self.replay_states[self.replay_idx + 1]
+                        cur_block = self.replay_states[self.replay_idx].block
+
+                        c_idx = 0
+                        act_dir = None
+                        if isinstance(action, Direction):
+                            act_dir = action
+                        elif isinstance(action, tuple) and len(action) == 2:
+                            c_idx, act_dir = action
+
+                        if act_dir:
+                            roll_dur = min(0.18, max(0.06, self.replay_speed * 0.75))
+
+                            def on_auto_step_done():
+                                self.replay_idx += 1
+                                self.game_state = nxt_state
+                                if nxt_state.is_goal():
+                                    self.is_playing_replay = False
+                                    self.btn_play_pause.text = "> Play"
+                                    self.animator.start_fall_goal(
+                                        nxt_state.block,
+                                        self.map_data.goal_pos,
+                                        duration=0.8,
+                                        on_complete=self.trigger_stage_transition
+                                    )
+
+                            self.animator.start_roll(
+                                cur_block,
+                                act_dir,
+                                cube_index=c_idx,
+                                duration=roll_dur,
+                                on_complete=on_auto_step_done
+                            )
+                        else:
+                            self.replay_idx += 1
+                            self.game_state = nxt_state
+                            if self.game_state.is_goal():
+                                self.game_won = True
+                                self.is_playing_replay = False
+                                self.btn_play_pause.text = "> Play"
                     else:
                         self.is_playing_replay = False
                         self.btn_play_pause.text = "> Play"
@@ -413,6 +655,30 @@ class BloxorzApp:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+
+                # Nếu đang trong màn hình chuyển cảnh, phím bấm hoặc click trên bàn cờ sẽ chuyển ngay
+                if self.transition_active:
+                    if event.type == pygame.KEYDOWN:
+                        self.transition_active = False
+                        if not self.is_all_cleared:
+                            self.next_level()
+                        continue
+                    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if event.pos[0] < 820:
+                            self.transition_active = False
+                            if not self.is_all_cleared:
+                                self.next_level()
+                            continue
+
+                # Nếu đang trong hoạt ảnh tái lập màn chơi, phím bấm hoặc click sẽ bỏ qua ngay
+                if self.board_animator.is_animating():
+                    if event.type == pygame.KEYDOWN:
+                        self.board_animator.skip_to_end()
+                        continue
+                    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if event.pos[0] < 820:
+                            self.board_animator.skip_to_end()
+                            continue
 
                 # Nút bấm UI
                 for btn in self.buttons:
@@ -435,6 +701,8 @@ class BloxorzApp:
                     elif event.key == pygame.K_SPACE:
                         # Đổi khối phân thân đang điều khiển (tạo trạng thái mới, không sửa trạng thái cũ)
                         if self.game_state and self.game_state.block.orientation == Orientation.SPLIT:
+                            if self.animator.is_animating():
+                                self.animator.finish_now()
                             old = self.game_state.block
                             swapped = BlockState(
                                 Orientation.SPLIT, old.r, old.c, old.r1, old.c1,
@@ -460,23 +728,40 @@ class BloxorzApp:
 
             # 4. Vẽ nền và khung cảnh 3D Isometric
             self.screen.fill(BG_COLOR)
+            self.renderer.render_background(self.screen, width=820, height=self.height)
 
             # Vẽ sàn và khối Bloxorz
             if self.map_data and self.game_state:
-                # Căn giữa bản đồ trong khung bên trái (0 -> 820px)
-                board_mid_c = self.map_data.cols / 2.0
-                board_mid_r = self.map_data.rows / 2.0
-                origin_x = int(410 - (board_mid_c - board_mid_r) * (self.renderer.tile_w / 2.0))
-                origin_y = int(360 - (board_mid_c + board_mid_r) * (self.renderer.tile_h / 2.0))
+                origin_x = self.renderer.origin_x
+                origin_y = self.renderer.origin_y
 
                 self.renderer.render_board(
                     self.map_data,
                     self.game_state.bridge_state,
                     origin_x,
-                    origin_y
+                    origin_y,
+                    tile_offsets=self.board_animator.tile_offsets if self.board_animator.is_animating() else None,
+                    hidden_tiles=self.board_animator.hidden_tiles if self.board_animator.is_animating() else None
                 )
 
-                if not self.game_over:
+                if self.board_animator.is_animating():
+                    if self.board_animator.should_render_block():
+                        z_off = self.board_animator.get_spawn_z_offset()
+                        self.renderer.render_block(
+                            self.game_state.block,
+                            origin_x,
+                            origin_y,
+                            pulse_val=pulse_val,
+                            z_offset=z_off
+                        )
+                elif self.animator.is_animating():
+                    self.animator.render(
+                        self.screen,
+                        origin_x,
+                        origin_y,
+                        self.renderer
+                    )
+                elif not self.game_over and not self.game_won and not self.transition_active:
                     self.renderer.render_block(
                         self.game_state.block,
                         origin_x,
@@ -484,11 +769,28 @@ class BloxorzApp:
                         pulse_val=pulse_val
                     )
 
-            # 5. Vẽ thông báo trạng thái Game (Thắng / Rơi sàn)
-            if self.game_won:
+                # Vẽ hiệu ứng phụ (mảnh vỡ sàn nứt vỡ, quầng sáng đích)
+                self.animator.render_overlays(
+                    self.screen,
+                    origin_x,
+                    origin_y,
+                    self.renderer
+                )
+
+                # Vẽ lớp overlay của hoạt ảnh tái lập sàn (Màn hình chờ, Flash chớp sáng)
+                if self.board_animator.is_animating():
+                    self.board_animator.render_overlay(self.screen, 820, self.height)
+
+
+            # 5. Vẽ thông báo trạng thái Game hoặc Màn hình chuyển cảnh
+            if self.board_animator.is_animating():
+                pass
+            elif self.transition_active:
+                self._render_stage_transition()
+            elif self.game_won:
                 self._draw_status_banner("CHIẾN THẮNG! (STAGE CLEARED!)", TEXT_SUCCESS)
-            elif self.game_over:
-                self._draw_status_banner("RƠI SÀN / THUA CUỘC! (Bấm R để chơi lại)", TEXT_DANGER)
+            elif self.animator.state in (BlockAnimator.STATE_FALL_EDGE, BlockAnimator.STATE_FALL_FRAGILE):
+                self._draw_status_banner("RƠI SÀN! ĐANG KHỞI ĐỘNG LẠI...", TEXT_DANGER)
             elif self.is_searching:
                 self._draw_status_banner("ĐANG TÌM KIẾM LỜI GIẢI...", TEXT_ACCENT)
 
@@ -498,6 +800,61 @@ class BloxorzApp:
             pygame.display.flip()
 
         pygame.quit()
+
+    def _render_stage_transition(self):
+        """Vẽ giao diện modal chuyển màn nổi bật sau khi hoàn thành màn chơi."""
+        if not self.transition_active:
+            return
+
+        # Lớp phủ mờ nền bàn cờ (0 -> 820px)
+        fade_alpha = int(min(215, 215 * (self.transition_timer / 0.22)))
+        overlay = pygame.Surface((820, self.height), pygame.SRCALPHA)
+        overlay.fill((10, 14, 24, fade_alpha))
+        self.screen.blit(overlay, (0, 0))
+
+        # Hộp thông báo trung tâm
+        card_w, card_h = 460, 230
+        card_x = (820 - card_w) // 2
+        card_y = (self.height - card_h) // 2 - 20
+        card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+
+        # Vẽ nền hộp thông báo
+        pygame.draw.rect(self.screen, (20, 26, 38), card_rect, border_radius=16)
+        border_col = (255, 205, 60) if not self.is_all_cleared else (63, 185, 80)
+        pygame.draw.rect(self.screen, border_col, card_rect, width=2, border_radius=16)
+
+        # 1. Badge phía trên
+        badge_text = "CHIẾN THẮNG MÀN HIỆN TẠI" if not self.is_all_cleared else "XUẤT SẮC! PHÁ ĐẢO TOÀN BỘ"
+        badge_surf = self.font_stage_badge.render(badge_text, True, border_col)
+        badge_rect = badge_surf.get_rect(center=(card_rect.centerx, card_rect.y + 35))
+        self.screen.blit(badge_surf, badge_rect)
+
+        # 2. Tiêu đề màn tiếp theo ("MÀN 02"...)
+        title_col = (255, 255, 255)
+        title_surf = self.font_stage_huge.render(self.next_stage_title, True, title_col)
+        title_rect = title_surf.get_rect(center=(card_rect.centerx, card_rect.y + 85))
+        self.screen.blit(title_surf, title_rect)
+
+        # 3. Phụ đề
+        sub_surf = self.font_stage_sub.render(self.next_stage_subtitle, True, TEXT_MUTED)
+        sub_rect = sub_surf.get_rect(center=(card_rect.centerx, card_rect.y + 130))
+        self.screen.blit(sub_surf, sub_rect)
+
+        # 4. Thanh tiến trình đếm giờ chuyển màn (Progress Bar)
+        bar_w, bar_h = 340, 6
+        bar_x = card_rect.centerx - bar_w // 2
+        bar_y = card_rect.y + 165
+        pygame.draw.rect(self.screen, (35, 45, 65), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
+
+        progress = min(1.0, self.transition_timer / self.transition_duration)
+        fill_w = int(bar_w * progress)
+        if fill_w > 0:
+            pygame.draw.rect(self.screen, border_col, (bar_x, bar_y, fill_w, bar_h), border_radius=3)
+
+        # 5. Gợi ý phím bấm
+        hint_surf = self.font_small.render("(Bấm phím bất kỳ hoặc Space / Enter để tiếp tục ngay)", True, (130, 145, 170))
+        hint_rect = hint_surf.get_rect(center=(card_rect.centerx, card_rect.y + 195))
+        self.screen.blit(hint_surf, hint_rect)
 
     def _draw_status_banner(self, text: str, color: Tuple[int, int, int]):
         """Vẽ biểu ngữ trạng thái nổi bật phía trên bàn cờ."""
@@ -604,7 +961,7 @@ class BloxorzApp:
         guide_lines = [
             "- Mũi tên / WASD: Lăn khối Bloxorz",
             "- Phím Space: Chuyển đổi khối điều khiển khi phân thân",
-            "- Phím R: Chơi lại màn | Phím U: Hoàn tác (Undo)"
+            "- Tự động chơi lại khi rơi sàn | Phím U: Hoàn tác (Undo)"
         ]
         gy = guide_y + 30
         for gl in guide_lines:

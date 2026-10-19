@@ -15,6 +15,12 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from src.core import load_map_from_file, GameState, BlockState, Orientation
 from src.solvers import solve_bfs, solve_ucs, solve_astar
 

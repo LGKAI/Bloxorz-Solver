@@ -1,11 +1,14 @@
 """
 Module: renderer.py
-Mô tả: Bộ dựng hình đồ họa 3D Isometric cho game Bloxorz bằng Pygame.
-      - Chiếu lưới ma trận (row, col) thành không gian 3D Isometric có chiều sâu, độ dày và bóng đổ.
-      - Vẽ các loại ô sàn đặc trưng: ô thường, ô cam dễ vỡ (Fragile), cầu đóng/mở (Bridge),
-        lỗ đích phát sáng (Goal), và các loại công tắc (Tròn mềm, Chữ X nặng, Phân thân).
-      - Vẽ khối hộp Bloxorz 1x1x2 đa chiều (đứng cao 2 tầng, nằm ngang, nằm dọc, phân thân 2 khối 1x1x1)
-        với hiệu ứng đổ bóng, đánh sáng các mặt và viền bóng bẩy.
+Mô tả: Bộ dựng hình đồ họa 3D Isometric chuẩn phong cách game Bloxorz kinh điển.
+      - Chiếu ma trận (row, col) thành không gian 3D nghiêng theo đúng góc nhìn của game gốc:
+        Trục cột c hơi chếch lên bên phải, trục hàng r chếch xuống bên phải,
+        khối đứng cao ráo và bóng đổ mềm phía sau.
+      - Tự động co giãn (Adaptive scaling) và căn giữa bản đồ chuẩn xác cho mọi màn chơi.
+      - Nền gradient đỏ rực rỡ đặc trưng của Bloxorz.
+      - Dựng hình các loại ô: ô thường, ô cam dễ vỡ (Fragile), cầu đóng/mở (Bridge),
+        lỗ đích có chiều sâu hút (Goal Hole) và các biểu tượng công tắc.
+      - Dựng hình khối Bloxorz 1x1x2 (đứng, nằm ngang, nằm dọc, phân thân) đồng bộ 3D.
 """
 
 import pygame
@@ -13,120 +16,249 @@ import math
 from typing import Tuple, List, Optional
 from src.core.block import BlockState, Orientation
 from src.core.map_loader import MapData
+from src.gui.safe_font import get_safe_font, SafeFont
 
 
-# Bảng màu thẩm mỹ cao (Curated Modern Palette)
-COLOR_BG_GRADIENT_TOP = (15, 20, 32)
-COLOR_BG_GRADIENT_BOTTOM = (24, 30, 48)
+# =========================================================================
+# BẢNG MÀU CHUẨN GỐC BLOXORZ (Classic Authentic Palette)
+# =========================================================================
 
-COLOR_TILE_TOP = (210, 218, 226)
-COLOR_TILE_LEFT = (160, 170, 185)
-COLOR_TILE_RIGHT = (130, 140, 155)
-COLOR_TILE_BORDER = (100, 110, 125)
+# Nền gradient đỏ đặc trưng của Bloxorz
+COLOR_BG_GRAD_TOP = (185, 28, 0)
+COLOR_BG_GRAD_MID = (80, 5, 0)
+COLOR_BG_GRAD_BOT = (18, 1, 1)
 
-COLOR_FRAGILE_TOP = (245, 120, 45)
-COLOR_FRAGILE_LEFT = (210, 90, 25)
-COLOR_FRAGILE_RIGHT = (175, 70, 15)
+# Màu ô sàn gạch bê tông xám sáng (Classic Slate Tiles)
+COLOR_TILE_TOP = (196, 206, 215)
+COLOR_TILE_LEFT = (130, 140, 150)
+COLOR_TILE_RIGHT = (105, 115, 125)  # Mặt trước hướng về người nhìn
+COLOR_TILE_FRONT = COLOR_TILE_RIGHT
+COLOR_TILE_BORDER = (160, 172, 182)
 
-COLOR_BRIDGE_OPEN_TOP = (235, 180, 60)
-COLOR_BRIDGE_OPEN_LEFT = (195, 145, 40)
-COLOR_BRIDGE_OPEN_RIGHT = (160, 115, 25)
+# Ô cam dễ vỡ (Fragile tile)
+COLOR_FRAGILE_TOP = (235, 120, 45)
+COLOR_FRAGILE_LEFT = (180, 85, 25)
+COLOR_FRAGILE_RIGHT = (150, 65, 15)
+COLOR_FRAGILE_FRONT = COLOR_FRAGILE_RIGHT
 
-COLOR_BRIDGE_CLOSED_OUTLINE = (55, 65, 85)
+# Cầu mở (Bridge open - màu đồng sáng)
+COLOR_BRIDGE_OPEN_TOP = (220, 175, 60)
+COLOR_BRIDGE_OPEN_LEFT = (175, 135, 40)
+COLOR_BRIDGE_OPEN_RIGHT = (145, 105, 25)
+COLOR_BRIDGE_OPEN_FRONT = COLOR_BRIDGE_OPEN_RIGHT
 
-COLOR_GOAL_HALO = (255, 220, 50, 70)
-COLOR_GOAL_CORE = (18, 20, 28)
-COLOR_GOAL_BORDER = (255, 200, 40)
+# Cầu đóng (Khung nét đứt trên vực sâu)
+COLOR_BRIDGE_CLOSED_OUTLINE = (65, 30, 25)
 
-# Màu của khối Bloxorz
-COLOR_BLOCK_TOP = (225, 135, 65)
-COLOR_BLOCK_LEFT = (150, 75, 30)
-COLOR_BLOCK_RIGHT = (185, 100, 45)
-COLOR_BLOCK_EDGE = (255, 175, 115)
+# Lỗ đích (Goal Hole sâu hút vào lòng đất)
+COLOR_GOAL_CORE = (15, 18, 22)
+COLOR_GOAL_INNER_BACK = (55, 45, 30)
+COLOR_GOAL_INNER_RIGHT = (35, 28, 20)
+COLOR_GOAL_BORDER = (90, 80, 55)
 
-COLOR_SHADOW = (10, 12, 18, 90)
+# Khối Bloxorz cổ điển (Nâu đồng / Thép gỉ / Kim loại quý vân sáng)
+COLOR_BLOCK_TOP = (168, 122, 108)
+COLOR_BLOCK_LEFT = (72, 60, 68)
+COLOR_BLOCK_RIGHT = (110, 78, 68)
+COLOR_BLOCK_FRONT = COLOR_BLOCK_RIGHT
+COLOR_BLOCK_EDGE = (195, 150, 135)
 
-# Khối phân thân
-COLOR_CUBE0_TOP = (70, 190, 245)
-COLOR_CUBE0_LEFT = (40, 140, 195)
-COLOR_CUBE0_RIGHT = (55, 165, 220)
+COLOR_SHADOW = (0, 0, 0, 95)
 
-COLOR_CUBE1_TOP = (215, 105, 245)
-COLOR_CUBE1_LEFT = (165, 65, 195)
-COLOR_CUBE1_RIGHT = (190, 85, 220)
+# Khối phân thân Split (Xanh dương / Tím phát sáng)
+COLOR_CUBE0_TOP = (70, 185, 235)
+COLOR_CUBE0_LEFT = (35, 130, 180)
+COLOR_CUBE0_RIGHT = (48, 155, 205)
+COLOR_CUBE0_FRONT = COLOR_CUBE0_RIGHT
+
+COLOR_CUBE1_TOP = (215, 105, 235)
+COLOR_CUBE1_LEFT = (155, 65, 185)
+COLOR_CUBE1_RIGHT = (180, 80, 205)
+COLOR_CUBE1_FRONT = COLOR_CUBE1_RIGHT
+
+
+# Vector cơ sở chuẩn hóa từ ảnh gốc Bloxorz:
+# Trục c (cột): dài 1.0, góc nghiêng nhẹ lên trên (uy / ux = -0.1585)
+# Trục r (hàng): dài 0.456, chếch xuống dưới bên phải (vy / vx = 1.477)
+# Chiều cao tầng khối: 0.647 (Khối đứng = 2 tầng = 1.294)
+# Độ dày sàn: 0.132
+U_BASE_X = 1.0
+U_BASE_Y = -0.1585
+V_BASE_X = 0.2559
+V_BASE_Y = 0.3779
+H_BASE = 0.647
+D_BASE = 0.132
 
 
 class IsoRenderer:
     """
-    Trình dựng hình đồ họa 3D Isometric.
+    Trình dựng hình đồ họa 3D Isometric theo góc nhìn chuẩn của Bloxorz gốc.
     """
 
-    def __init__(self, screen: pygame.Surface, tile_width: int = 44, tile_height: int = 22, tile_depth: int = 8):
+    def __init__(self, screen, tile_width: int = 68, tile_height: int = 44, tile_depth: int = 9):
         self.screen = screen
-        self.tile_w = tile_width
-        self.tile_h = tile_height
-        self.tile_d = tile_depth
-        self.block_unit_h = 28  # Chiều cao của 1 tầng khối 1x1x1
+        self.scale = 65.0
 
-        # Khởi tạo font chữ để vẽ ký hiệu công tắc
-        pygame.font.init()
-        self.font_small = pygame.font.SysFont("segoeui", 13, bold=True)
-        self.font_bold = pygame.font.SysFont("segoeui", 15, bold=True)
+        # Vector chuyển đổi màn hình (px)
+        self.ux = U_BASE_X * self.scale
+        self.uy = U_BASE_Y * self.scale
+        self.vx = V_BASE_X * self.scale
+        self.vy = V_BASE_Y * self.scale
+        self.bh = H_BASE * self.scale
+        self.tile_d = max(5, int(D_BASE * self.scale))
 
-    def grid_to_iso(self, r: int, c: int, origin_x: int, origin_y: int) -> Tuple[int, int]:
+        # Thuộc tính tương thích ngược
+        self.tile_w = int(self.ux)
+        self.tile_h = int(self.vy * 2)
+        self.block_unit_h = int(self.bh)
+
+        self.origin_x = 410
+        self.origin_y = 380
+
+        # Bề mặt đệm vẽ nền gradient
+        self._bg_surface: Optional[pygame.Surface] = None
+        self._bg_size: Tuple[int, int] = (0, 0)
+
+        # Khởi tạo font chữ cho các biểu tượng công tắc
+        self.font_small = get_safe_font("segoeui", 13, bold=True)
+        self.font_bold = get_safe_font("segoeui", 15, bold=True)
+
+    def compute_layout(self, map_data: MapData, view_w: int = 820, view_h: int = 780) -> Tuple[int, int]:
         """
-        Chuyển đổi tọa độ ma trận (row, col) sang tọa độ màn hình Isometric (x, y).
+        Tính toán tỷ lệ scale và vị trí origin_x, origin_y tối ưu cho từng bản đồ,
+        giúp bàn cờ luôn hiển thị to, đẹp và cân đối hoàn hảo trong khung view_w x view_h.
         """
-        iso_x = origin_x + int((c - r) * (self.tile_w / 2.0))
-        iso_y = origin_y + int((c + r) * (self.tile_h / 2.0))
-        return (iso_x, iso_y)
+        pts = []
+        for r in range(map_data.rows):
+            for c in range(map_data.cols):
+                if map_data.board[r][c] != 0 or (r, c) in map_data.bridge_indices:
+                    for dr, dc in [(0, 0), (0, 1), (1, 1), (1, 0)]:
+                        gx = (c + dc) * U_BASE_X + (r + dr) * V_BASE_X
+                        gy = (c + dc) * U_BASE_Y + (r + dr) * V_BASE_Y
+                        pts.append((gx, gy))
+
+        if not pts:
+            return (self.origin_x, self.origin_y)
+
+        min_x = min(p[0] for p in pts)
+        max_x = max(p[0] for p in pts)
+        min_y = min(p[1] for p in pts)
+        max_y = max(p[1] for p in pts)
+
+        unscaled_w = max_x - min_x
+        unscaled_h = max_y - min_y
+
+        # Khung mục tiêu: chừa lề xung quanh để hiển thị đẹp mắt và không chạm mép
+        target_w = max(200.0, float(view_w - 90))
+        target_h = max(200.0, float(view_h - 220))
+
+        scale_w = target_w / max(0.1, unscaled_w)
+        scale_h = target_h / max(0.1, unscaled_h)
+        self.scale = max(38.0, min(scale_w, scale_h, 68.0))
+
+        # Cập nhật các vector theo scale mới
+        self.ux = U_BASE_X * self.scale
+        self.uy = U_BASE_Y * self.scale
+        self.vx = V_BASE_X * self.scale
+        self.vy = V_BASE_Y * self.scale
+        self.bh = H_BASE * self.scale
+        self.tile_d = max(5, int(D_BASE * self.scale))
+
+        self.tile_w = int(self.ux)
+        self.tile_h = int(self.vy * 2)
+        self.block_unit_h = int(self.bh)
+
+        # Căn giữa bàn cờ trong khung (0 -> view_w, 0 -> view_h)
+        scaled_min_x = min_x * self.scale
+        scaled_max_x = max_x * self.scale
+        scaled_min_y = min_y * self.scale
+        scaled_max_y = max_y * self.scale
+
+        self.origin_x = int((view_w - (scaled_max_x - scaled_min_x)) / 2.0 - scaled_min_x)
+        self.origin_y = int((view_h - (scaled_max_y - scaled_min_y)) / 2.0 - scaled_min_y + 40)
+
+        return (self.origin_x, self.origin_y)
+
+    def grid_to_iso(
+        self,
+        r: float,
+        c: float,
+        origin_x: Optional[int] = None,
+        origin_y: Optional[int] = None,
+        z: float = 0.0
+    ) -> Tuple[int, int]:
+        """
+        Chuyển đổi tọa độ 3D ma trận (row, col, z) sang tọa độ màn hình (x, y).
+        """
+        ox = self.origin_x if origin_x is None else origin_x
+        oy = self.origin_y if origin_y is None else origin_y
+        x = ox + c * self.ux + r * self.vx
+        y = oy + c * self.uy + r * self.vy - z * self.bh
+        return (int(x), int(y))
+
+    def render_background(self, surface: pygame.Surface, width: int = 820, height: int = 780):
+        """Vẽ nền dải gradient đỏ huyền thoại của Bloxorz."""
+        if self._bg_surface is None or self._bg_size != (width, height):
+            self._bg_surface = pygame.Surface((width, height))
+            self._bg_size = (width, height)
+            for y in range(height):
+                t = y / float(height)
+                if t < 0.48:
+                    lt = t / 0.48
+                    r = int(COLOR_BG_GRAD_TOP[0] * (1 - lt) + COLOR_BG_GRAD_MID[0] * lt)
+                    g = int(COLOR_BG_GRAD_TOP[1] * (1 - lt) + COLOR_BG_GRAD_MID[1] * lt)
+                    b = int(COLOR_BG_GRAD_TOP[2] * (1 - lt) + COLOR_BG_GRAD_MID[2] * lt)
+                else:
+                    lt = (t - 0.48) / 0.52
+                    r = int(COLOR_BG_GRAD_MID[0] * (1 - lt) + COLOR_BG_GRAD_BOT[0] * lt)
+                    g = int(COLOR_BG_GRAD_MID[1] * (1 - lt) + COLOR_BG_GRAD_BOT[1] * lt)
+                    b = int(COLOR_BG_GRAD_MID[2] * (1 - lt) + COLOR_BG_GRAD_BOT[2] * lt)
+                pygame.draw.line(self._bg_surface, (r, g, b), (0, y), (width, y))
+
+        surface.blit(self._bg_surface, (0, 0))
 
     def draw_iso_tile(
         self,
         surface: pygame.Surface,
-        cx: int,
-        cy: int,
+        r: int,
+        c: int,
+        origin_x: int,
+        origin_y: int,
         top_color: Tuple[int, int, int],
         left_color: Tuple[int, int, int],
-        right_color: Tuple[int, int, int],
+        front_color: Tuple[int, int, int],
         depth: Optional[int] = None,
-        draw_border: bool = True
+        draw_border: bool = True,
+        z_offset_px: int = 0
     ):
         """
-        Vẽ một ô sàn hình quả trám có độ dày (3D Isometric tile).
+        Vẽ một ô sàn 3D theo 4 đỉnh hình bình hành chuẩn góc nhìn Bloxorz.
         """
         d = self.tile_d if depth is None else depth
-        hw = self.tile_w // 2
-        hh = self.tile_h // 2
 
-        # 4 đỉnh của mặt trên ô sàn
-        top_pts = [
-            (cx, cy - hh),       # Đỉnh trên
-            (cx + hw, cy),       # Đỉnh phải
-            (cx, cy + hh),       # Đỉnh dưới
-            (cx - hw, cy)        # Đỉnh trái
-        ]
+        # 4 đỉnh của mặt trên ô sàn tại ô (r, c)
+        p0 = self.grid_to_iso(r, c, origin_x, origin_y)
+        p1 = self.grid_to_iso(r, c + 1, origin_x, origin_y)
+        p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
+        p3 = self.grid_to_iso(r + 1, c, origin_x, origin_y)
+
+        if z_offset_px != 0:
+            p0 = (p0[0], p0[1] + z_offset_px)
+            p1 = (p1[0], p1[1] + z_offset_px)
+            p2 = (p2[0], p2[1] + z_offset_px)
+            p3 = (p3[0], p3[1] + z_offset_px)
 
         if d > 0:
-            # Mặt hông trái
-            left_pts = [
-                (cx - hw, cy),
-                (cx, cy + hh),
-                (cx, cy + hh + d),
-                (cx - hw, cy + d)
-            ]
+            # Mặt hông trái: từ p0 sang p3
+            left_pts = [p0, p3, (p3[0], p3[1] + d), (p0[0], p0[1] + d)]
             pygame.draw.polygon(surface, left_color, left_pts)
 
-            # Mặt hông phải
-            right_pts = [
-                (cx, cy + hh),
-                (cx + hw, cy),
-                (cx + hw, cy + d),
-                (cx, cy + hh + d)
-            ]
-            pygame.draw.polygon(surface, right_color, right_pts)
+            # Mặt hông trước: từ p3 sang p2
+            front_pts = [p3, p2, (p2[0], p2[1] + d), (p3[0], p3[1] + d)]
+            pygame.draw.polygon(surface, front_color, front_pts)
 
-        # Mặt trên
+        # Mặt nóc ô sàn
+        top_pts = [p0, p1, p2, p3]
         pygame.draw.polygon(surface, top_color, top_pts)
 
         if draw_border:
@@ -137,243 +269,258 @@ class IsoRenderer:
         map_data: MapData,
         bridge_state: Tuple[bool, ...],
         origin_x: int,
-        origin_y: int
+        origin_y: int,
+        tile_offsets: Optional[dict] = None,
+        hidden_tiles: Optional[set] = None
     ):
         """
-        Vẽ toàn bộ bản đồ sàn đấu theo thứ tự từ xa lại gần (hàng + cột tăng dần).
+        Vẽ toàn bộ bản đồ theo thứ tự độ sâu từ xa tới gần.
         """
         rows, cols = map_data.rows, map_data.cols
 
-        # Duyệt theo đường chéo d = r + c để bảo đảm tính đúng của Painter's Algorithm
-        for diag in range(rows + cols - 1):
-            for r in range(rows):
-                c = diag - r
-                if not (0 <= c < cols):
+        # Lấy danh sách tất cả các ô cần vẽ và sắp xếp theo depth
+        all_cells = []
+        for r in range(rows):
+            for c in range(cols):
+                if hidden_tiles and (r, c) in hidden_tiles:
                     continue
-
-                cx, cy = self.grid_to_iso(r, c, origin_x, origin_y)
-
-                # Kiểm tra nếu là ô cầu
-                if (r, c) in map_data.bridge_indices:
-                    idx = map_data.bridge_indices[(r, c)]
-                    is_open = bridge_state[idx]
-                    if is_open:
-                        # Cầu đang mở: hiện ô sàn màu đồng đặc biệt
-                        self.draw_iso_tile(
-                            self.screen, cx, cy,
-                            COLOR_BRIDGE_OPEN_TOP,
-                            COLOR_BRIDGE_OPEN_LEFT,
-                            COLOR_BRIDGE_OPEN_RIGHT
-                        )
-                    else:
-                        # Cầu đang đóng: vẽ khung đứt mờ ảo mô tả khoảng trống vực sâu
-                        hw = self.tile_w // 2
-                        hh = self.tile_h // 2
-                        outline_pts = [
-                            (cx, cy - hh), (cx + hw, cy),
-                            (cx, cy + hh), (cx - hw, cy)
-                        ]
-                        pygame.draw.polygon(self.screen, COLOR_BRIDGE_CLOSED_OUTLINE, outline_pts, 1)
-                    continue
-
+                is_bridge = (r, c) in map_data.bridge_indices
                 tile_val = map_data.board[r][c]
-                if tile_val == 0:
-                    continue  # Vực thẳm / Hư vô
+                if tile_val != 0 or is_bridge:
+                    all_cells.append((r, c, tile_val, is_bridge))
 
-                # Ô thông thường hoặc ô đặc biệt
-                if tile_val == 1:
-                    self.draw_iso_tile(self.screen, cx, cy, COLOR_TILE_TOP, COLOR_TILE_LEFT, COLOR_TILE_RIGHT)
+        # Sort theo depth: r càng nhỏ ở càng xa, c càng nhỏ ở càng xa
+        all_cells.sort(key=lambda item: item[0] * 100 + item[1])
 
-                elif tile_val == 2:
-                    # Ô cam dễ vỡ (Fragile)
-                    self.draw_iso_tile(self.screen, cx, cy, COLOR_FRAGILE_TOP, COLOR_FRAGILE_LEFT, COLOR_FRAGILE_RIGHT)
-                    # Vẽ vân lưới mỏng biểu thị ô có thể nứt vỡ
-                    hw = self.tile_w // 2
-                    hh = self.tile_h // 2
-                    pygame.draw.line(self.screen, (255, 170, 110), (cx - hw // 2, cy), (cx + hw // 2, cy), 1)
+        for r, c, tile_val, is_bridge in all_cells:
+            z_off = 0
+            if tile_offsets and (r, c) in tile_offsets:
+                z_off = int(tile_offsets[(r, c)])
 
-                elif tile_val == 9:
-                    # Lỗ đích (Goal Hole)
-                    self.draw_iso_tile(self.screen, cx, cy, (40, 45, 60), (25, 30, 40), (20, 25, 35))
-                    # Lõi lỗ sâu hút phát sáng vàng
-                    pygame.draw.circle(self.screen, COLOR_GOAL_CORE, (cx, cy), self.tile_h // 2 - 2)
-                    pygame.draw.circle(self.screen, COLOR_GOAL_BORDER, (cx, cy), self.tile_h // 2 - 2, 2)
-                    # Vành hào quang
-                    pygame.draw.circle(self.screen, (255, 235, 100), (cx, cy), self.tile_h // 4)
+            if is_bridge:
+                idx = map_data.bridge_indices[(r, c)]
+                is_open = bridge_state[idx]
+                if is_open:
+                    self.draw_iso_tile(
+                        self.screen, r, c, origin_x, origin_y,
+                        COLOR_BRIDGE_OPEN_TOP, COLOR_BRIDGE_OPEN_LEFT, COLOR_BRIDGE_OPEN_FRONT,
+                        z_offset_px=z_off
+                    )
+                else:
+                    # Cầu đóng: vẽ viền mờ rỗng
+                    p0 = self.grid_to_iso(r, c, origin_x, origin_y)
+                    p1 = self.grid_to_iso(r, c + 1, origin_x, origin_y)
+                    p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
+                    p3 = self.grid_to_iso(r + 1, c, origin_x, origin_y)
+                    if z_off != 0:
+                        p0 = (p0[0], p0[1] + z_off)
+                        p1 = (p1[0], p1[1] + z_off)
+                        p2 = (p2[0], p2[1] + z_off)
+                        p3 = (p3[0], p3[1] + z_off)
+                    pygame.draw.polygon(self.screen, COLOR_BRIDGE_CLOSED_OUTLINE, [p0, p1, p2, p3], 1)
+                continue
 
-                elif tile_val in (3, 4, 5, 6, 7, 8):
-                    # Ô chứa công tắc: vẽ sàn trước rồi vẽ biểu tượng công tắc lên trên
-                    self.draw_iso_tile(self.screen, cx, cy, COLOR_TILE_TOP, COLOR_TILE_LEFT, COLOR_TILE_RIGHT)
-                    self._render_switch_icon(cx, cy, tile_val)
+            if tile_val == 1:
+                # Ô bình thường
+                self.draw_iso_tile(
+                    self.screen, r, c, origin_x, origin_y,
+                    COLOR_TILE_TOP, COLOR_TILE_LEFT, COLOR_TILE_FRONT,
+                    z_offset_px=z_off
+                )
 
-    def _render_switch_icon(self, cx: int, cy: int, tile_val: int):
-        """Vẽ biểu tượng từng loại công tắc trên mặt ô sàn."""
+            elif tile_val == 2:
+                # Ô cam dễ vỡ (Fragile)
+                self.draw_iso_tile(
+                    self.screen, r, c, origin_x, origin_y,
+                    COLOR_FRAGILE_TOP, COLOR_FRAGILE_LEFT, COLOR_FRAGILE_FRONT,
+                    z_offset_px=z_off
+                )
+                # Viền kẻ nứt biểu tượng ô vỡ
+                p0 = self.grid_to_iso(r, c, origin_x, origin_y)
+                p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
+                if z_off != 0:
+                    p0 = (p0[0], p0[1] + z_off)
+                    p2 = (p2[0], p2[1] + z_off)
+                pygame.draw.line(self.screen, (255, 175, 110), p0, p2, 1)
+
+            elif tile_val == 9:
+                # Lỗ đích (Goal Hole sâu thẳm)
+                p0 = self.grid_to_iso(r, c, origin_x, origin_y)
+                p1 = self.grid_to_iso(r, c + 1, origin_x, origin_y)
+                p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
+                p3 = self.grid_to_iso(r + 1, c, origin_x, origin_y)
+                if z_off != 0:
+                    p0 = (p0[0], p0[1] + z_off)
+                    p1 = (p1[0], p1[1] + z_off)
+                    p2 = (p2[0], p2[1] + z_off)
+                    p3 = (p3[0], p3[1] + z_off)
+
+                # Vẽ đáy lỗ sâu
+                hole_face = [p0, p1, p2, p3]
+                pygame.draw.polygon(self.screen, COLOR_GOAL_CORE, hole_face)
+
+                inner_depth = int(self.bh * 0.6)
+                # Thành sâu bên trong (vách sau: p0 -> p1)
+                inner_back = [p0, p1, (p1[0], p1[1] + inner_depth), (p0[0], p0[1] + inner_depth)]
+                pygame.draw.polygon(self.screen, COLOR_GOAL_INNER_BACK, inner_back)
+
+                # Thành sâu bên trong (vách phải: p1 -> p2)
+                inner_right = [p1, p2, (p2[0], p2[1] + inner_depth), (p1[0], p1[1] + inner_depth)]
+                pygame.draw.polygon(self.screen, COLOR_GOAL_INNER_RIGHT, inner_right)
+
+                pygame.draw.polygon(self.screen, COLOR_GOAL_BORDER, hole_face, 1)
+
+            elif tile_val in (3, 4, 5, 6, 7, 8):
+                # Công tắc
+                self.draw_iso_tile(
+                    self.screen, r, c, origin_x, origin_y,
+                    COLOR_TILE_TOP, COLOR_TILE_LEFT, COLOR_TILE_FRONT,
+                    z_offset_px=z_off
+                )
+                self._render_switch_icon(r, c, origin_x, origin_y, tile_val, z_off)
+
+    def _render_switch_icon(self, r: int, c: int, origin_x: int, origin_y: int, tile_val: int, z_off: int = 0):
+        """Vẽ biểu tượng công tắc trên mặt sàn hình bình hành."""
+        # Tính tâm hình bình hành
+        p0 = self.grid_to_iso(r, c, origin_x, origin_y)
+        p1 = self.grid_to_iso(r, c + 1, origin_x, origin_y)
+        p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
+        p3 = self.grid_to_iso(r + 1, c, origin_x, origin_y)
+
+        cx = int((p0[0] + p1[0] + p2[0] + p3[0]) / 4.0)
+        cy = int((p0[1] + p1[1] + p2[1] + p3[1]) / 4.0) + z_off
+
         if tile_val in (4, 5, 6):
-            # Công tắc nhẹ (tròn): vòng tròn nổi màu xanh/cam
             circle_color = (60, 150, 255) if tile_val == 5 else ((240, 70, 70) if tile_val == 4 else (60, 220, 120))
-            pygame.draw.circle(self.screen, (30, 40, 60), (cx, cy), 8)
-            pygame.draw.circle(self.screen, circle_color, (cx, cy), 6)
-            pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), 3)
+            rad = max(4, int(self.scale * 0.12))
+            pygame.draw.circle(self.screen, (30, 40, 60), (cx, cy), rad + 2)
+            pygame.draw.circle(self.screen, circle_color, (cx, cy), rad)
+            pygame.draw.circle(self.screen, (255, 255, 255), (cx, cy), max(2, rad // 2))
 
         elif tile_val in (3, 8):
-            # Công tắc nặng (Chữ X): biểu tượng X đậm nét
             x_color = (190, 40, 40) if tile_val == 3 else (40, 180, 80)
             txt = self.font_bold.render("X", True, x_color)
             rect = txt.get_rect(center=(cx, cy - 1))
             self.screen.blit(txt, rect)
 
         elif tile_val == 7:
-            # Công tắc phân thân (Split switch): biểu tượng ( )
             txt = self.font_bold.render("( )", True, (160, 60, 230))
             rect = txt.get_rect(center=(cx, cy - 1))
             self.screen.blit(txt, rect)
+
+    def _draw_cuboid_bounds(
+        self,
+        rmin: float, rmax: float,
+        cmin: float, cmax: float,
+        zmin: float, zmax: float,
+        origin_x: int, origin_y: int,
+        top_color: Tuple[int, int, int],
+        left_color: Tuple[int, int, int],
+        front_color: Tuple[int, int, int],
+        draw_shadow: bool = True
+    ):
+        """Vẽ hình hộp chữ nhật 3D theo góc nhìn chuẩn Bloxorz."""
+        def p(r, c, z):
+            return self.grid_to_iso(r, c, origin_x, origin_y, z)
+
+        # 8 đỉnh
+        b0 = p(rmin, cmin, zmin)
+        b1 = p(rmin, cmax, zmin)
+        b2 = p(rmax, cmax, zmin)
+        b3 = p(rmax, cmin, zmin)
+
+        t0 = p(rmin, cmin, zmax)
+        t1 = p(rmin, cmax, zmax)
+        t2 = p(rmax, cmax, zmax)
+        t3 = p(rmax, cmin, zmax)
+
+        # Bóng đổ mềm phía sau bên phải
+        if draw_shadow and zmin >= 0:
+            shadow_surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+            s_pts = [
+                p(rmin + 0.05, cmin + 0.25, 0),
+                p(rmin - 0.45, cmax + 0.75, 0),
+                p(rmax - 0.10, cmax + 0.75, 0),
+                p(rmax + 0.10, cmin + 0.25, 0)
+            ]
+            pygame.draw.polygon(shadow_surf, COLOR_SHADOW, s_pts)
+            self.screen.blit(shadow_surf, (0, 0))
+
+        # Mặt trái: b0 -> b3 -> t3 -> t0
+        pygame.draw.polygon(self.screen, left_color, [b0, b3, t3, t0])
+
+        # Mặt trước: b3 -> b2 -> t2 -> t3
+        pygame.draw.polygon(self.screen, front_color, [b3, b2, t2, t3])
+
+        # Mặt nóc: t0 -> t1 -> t2 -> t3
+        top_face = [t0, t1, t2, t3]
+        pygame.draw.polygon(self.screen, top_color, top_face)
+
+        # Viền nổi bật cạnh sắc nét
+        pygame.draw.lines(self.screen, COLOR_BLOCK_EDGE, True, top_face, 1)
+        pygame.draw.line(self.screen, COLOR_BLOCK_EDGE, t3, b3, 1)
+        pygame.draw.line(self.screen, COLOR_BLOCK_EDGE, t2, b2, 1)
 
     def render_block(
         self,
         block: BlockState,
         origin_x: int,
         origin_y: int,
-        pulse_val: float = 0.0
+        pulse_val: float = 0.0,
+        z_offset: float = 0.0
     ):
         """
-        Vẽ khối Bloxorz 1x1x2 hoặc 2 khối phân thân 1x1x1 theo tọa độ và hướng hiện tại.
+        Vẽ khối Bloxorz (standing, horizontal, vertical, split) theo đúng hệ trục 3D mới.
         """
         ori = block.orientation
 
         if ori == Orientation.STANDING:
-            cx, cy = self.grid_to_iso(block.r, block.c, origin_x, origin_y)
-            # Khối đứng cao gấp 2 lần đơn vị khối (2 * block_unit_h)
-            height = self.block_unit_h * 2
-            self._draw_3d_box(
-                cx, cy,
-                self.tile_w, self.tile_h, height,
-                COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_RIGHT
+            self._draw_cuboid_bounds(
+                block.r, block.r + 1,
+                block.c, block.c + 1,
+                z_offset, z_offset + 2.0,
+                origin_x, origin_y,
+                COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_FRONT
             )
 
         elif ori == Orientation.HORIZONTAL:
-            # Chiếm (r, c) và (r, c + 1): vùng chân rộng 1 hàng x 2 cột, cao 1 đơn vị
-            self._draw_cuboid(
-                block.r, block.c, block.r, block.c + 1, self.block_unit_h,
+            self._draw_cuboid_bounds(
+                block.r, block.r + 1,
+                block.c, block.c + 2,
+                z_offset, z_offset + 1.0,
                 origin_x, origin_y,
-                COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_RIGHT
+                COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_FRONT
             )
 
         elif ori == Orientation.VERTICAL:
-            # Chiếm (r, c) và (r + 1, c): vùng chân rộng 2 hàng x 1 cột, cao 1 đơn vị
-            self._draw_cuboid(
-                block.r, block.c, block.r + 1, block.c, self.block_unit_h,
+            self._draw_cuboid_bounds(
+                block.r, block.r + 2,
+                block.c, block.c + 1,
+                z_offset, z_offset + 1.0,
                 origin_x, origin_y,
-                COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_RIGHT
+                COLOR_BLOCK_TOP, COLOR_BLOCK_LEFT, COLOR_BLOCK_FRONT
             )
 
         elif ori == Orientation.SPLIT:
-            # Hai khối lập phương 1x1x1 độc lập
-            # Vẽ khối ở xa trước để không bị che khuất sai
             cubes = [(block.r, block.c, 0), (block.r1, block.c1, 1)]
-            cubes.sort(key=lambda item: item[0] + item[1])
+            cubes.sort(key=lambda item: item[0] * 100 + item[1])
 
             for r, c, idx in cubes:
-                cx, cy = self.grid_to_iso(r, c, origin_x, origin_y)
                 is_active = (block.active_cube == idx)
                 top_col = COLOR_CUBE0_TOP if idx == 0 else COLOR_CUBE1_TOP
                 left_col = COLOR_CUBE0_LEFT if idx == 0 else COLOR_CUBE1_LEFT
-                right_col = COLOR_CUBE0_RIGHT if idx == 0 else COLOR_CUBE1_RIGHT
+                front_col = COLOR_CUBE0_FRONT if idx == 0 else COLOR_CUBE1_FRONT
 
-                self._draw_3d_box(
-                    cx, cy,
-                    self.tile_w, self.tile_h, self.block_unit_h,
-                    top_col, left_col, right_col
+                self._draw_cuboid_bounds(
+                    r, r + 1,
+                    c, c + 1,
+                    z_offset, z_offset + 1.0,
+                    origin_x, origin_y,
+                    top_col, left_col, front_col
                 )
 
-                # Vòng sáng xung quanh khối đang được chọn điều khiển (Active cube)
                 if is_active:
-                    halo_r = int(self.tile_w // 2 + 3 + math.sin(pulse_val * 4.0) * 2)
-                    pygame.draw.ellipse(
-                        self.screen,
-                        (255, 235, 100),
-                        (cx - halo_r, cy - halo_r // 2 - self.block_unit_h, halo_r * 2, halo_r),
-                        2
-                    )
-
-    def _draw_3d_box(
-        self,
-        cx: int,
-        cy: int,
-        w: int,
-        h: int,
-        height: int,
-        top_color: Tuple[int, int, int],
-        left_color: Tuple[int, int, int],
-        right_color: Tuple[int, int, int]
-    ):
-        """Vẽ một hình hộp chữ nhật Isometric 3D đứng trên ô tâm (cx, cy)."""
-        hw = w // 2
-        hh = h // 2
-
-        # Đáy (chân khối trên mặt sàn)
-        b_top = (cx, cy - hh)
-        b_right = (cx + hw, cy)
-        b_bottom = (cx, cy + hh)
-        b_left = (cx - hw, cy)
-
-        # Đỉnh trên (nâng cao theo trục y âm một đoạn = height)
-        t_top = (cx, cy - hh - height)
-        t_right = (cx + hw, cy - height)
-        t_bottom = (cx, cy + hh - height)
-        t_left = (cx - hw, cy - height)
-
-        # Mặt trái (Left face)
-        left_pts = [b_left, b_bottom, t_bottom, t_left]
-        pygame.draw.polygon(self.screen, left_color, left_pts)
-
-        # Mặt phải (Right face)
-        right_pts = [b_bottom, b_right, t_right, t_bottom]
-        pygame.draw.polygon(self.screen, right_color, right_pts)
-
-        # Mặt nóc (Top face)
-        top_pts = [t_top, t_right, t_bottom, t_left]
-        pygame.draw.polygon(self.screen, top_color, top_pts)
-
-        # Đường viền viền sáng trên các cạnh
-        pygame.draw.lines(self.screen, COLOR_BLOCK_EDGE, True, top_pts, 1)
-        pygame.draw.line(self.screen, COLOR_BLOCK_EDGE, t_bottom, b_bottom, 1)
-
-    def _draw_cuboid(
-        self,
-        r0: int, c0: int, r1: int, c1: int,
-        height: int,
-        origin_x: int, origin_y: int,
-        top_color: Tuple[int, int, int],
-        left_color: Tuple[int, int, int],
-        right_color: Tuple[int, int, int]
-    ):
-        """
-        Vẽ hình hộp isometric phủ vùng chân từ ô (r0, c0) đến ô (r1, c1) (bao gồm cả hai đầu).
-        Dùng chung cho khối nằm ngang (1x2 ô) và nằm dọc (2x1 ô). Mép vùng chân nằm
-        cách tâm ô 0.5 đơn vị, nên bốn đỉnh là: sau, phải, trước, trái.
-        """
-        def pt(rr: float, cc: float) -> Tuple[int, int]:
-            x = origin_x + (cc - rr) * (self.tile_w / 2.0)
-            y = origin_y + (cc + rr) * (self.tile_h / 2.0)
-            return (int(x), int(y))
-
-        rmin, rmax = r0 - 0.5, r1 + 0.5
-        cmin, cmax = c0 - 0.5, c1 + 0.5
-
-        back = pt(rmin, cmin)
-        right = pt(rmin, cmax)
-        front = pt(rmax, cmax)
-        left = pt(rmax, cmin)
-
-        def up(p):
-            return (p[0], p[1] - height)
-
-        # Mặt trái: nối đỉnh trái -> đỉnh trước
-        pygame.draw.polygon(self.screen, left_color, [left, front, up(front), up(left)])
-        # Mặt phải: nối đỉnh trước -> đỉnh phải
-        pygame.draw.polygon(self.screen, right_color, [front, right, up(right), up(front)])
-        # Mặt nóc
-        top_pts = [up(back), up(right), up(front), up(left)]
-        pygame.draw.polygon(self.screen, top_color, top_pts)
-        pygame.draw.lines(self.screen, COLOR_BLOCK_EDGE, True, top_pts, 1)
-        pygame.draw.line(self.screen, COLOR_BLOCK_EDGE, up(front), front, 1)
+                    # Vòng sáng xung quanh khối đang điều khiển
+                    p_mid = self.grid_to_iso(r + 0.5, c + 0.5, origin_x, origin_y, z=1.0)
+                    rad = int(self.scale * 0.45 + math.sin(pulse_val * 4.0) * 3)
+                    pygame.draw.circle(self.screen, (255, 235, 100), p_mid, rad, 2)
