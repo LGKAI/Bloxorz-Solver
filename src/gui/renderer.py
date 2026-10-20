@@ -3,12 +3,12 @@ Module: renderer.py
 Mô tả: Bộ dựng hình đồ họa 3D Isometric chuẩn phong cách game Bloxorz kinh điển.
       - Chiếu ma trận (row, col) thành không gian 3D nghiêng theo đúng góc nhìn của game gốc:
         Trục cột c hơi chếch lên bên phải, trục hàng r chếch xuống bên phải,
-        khối đứng cao ráo và bóng đổ mềm phía sau.
+        khối đứng cao ráo và bóng đổ mềm mờ (soft blurred shadow) phía sau.
+      - Render mặt phẳng sàn liền mạch: 2 ô gạch chạm nhau không vẽ các cạnh đổ bóng hông,
+        chỉ mép ngoài tiếp giáp với vực thẳm mới có độ dày 3D.
+      - Hỗ trợ depth filtering để các ô sàn phía trước che khuất nhân vật khi nhân vật rơi xuống vực.
       - Tự động co giãn (Adaptive scaling) và căn giữa bản đồ chuẩn xác cho mọi màn chơi.
       - Nền gradient đỏ rực rỡ đặc trưng của Bloxorz.
-      - Dựng hình các loại ô: ô thường, ô cam dễ vỡ (Fragile), cầu đóng/mở (Bridge),
-        lỗ đích có chiều sâu hút (Goal Hole) và các biểu tượng công tắc.
-      - Dựng hình khối Bloxorz 1x1x2 (đứng, nằm ngang, nằm dọc, phân thân) đồng bộ 3D.
 """
 
 import pygame
@@ -78,16 +78,43 @@ COLOR_CUBE1_FRONT = COLOR_CUBE1_RIGHT
 
 
 # Vector cơ sở chuẩn hóa từ ảnh gốc Bloxorz:
-# Trục c (cột): dài 1.0, góc nghiêng nhẹ lên trên (uy / ux = -0.1585)
-# Trục r (hàng): dài 0.456, chếch xuống dưới bên phải (vy / vx = 1.477)
-# Chiều cao tầng khối: 0.647 (Khối đứng = 2 tầng = 1.294)
-# Độ dày sàn: 0.132
 U_BASE_X = 1.0
 U_BASE_Y = -0.1585
 V_BASE_X = 0.2559
 V_BASE_Y = 0.3779
 H_BASE = 0.647
 D_BASE = 0.132
+
+
+def draw_soft_shadow(surface: pygame.Surface, pts: List[Tuple[int, int]], base_alpha: int = 90):
+    """
+    Vẽ bóng đổ có độ mờ nhẹ (feathered / blurred soft shadow) bằng kỹ thuật smoothscale down & up.
+    """
+    if len(pts) < 3 or surface is None:
+        return
+
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    pad = 12
+    w = (max_x - min_x) + pad * 2
+    h = (max_y - min_y) + pad * 2
+    if w <= 0 or h <= 0:
+        return
+
+    shadow_surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    rel_pts = [(p[0] - min_x + pad, p[1] - min_y + pad) for p in pts]
+    pygame.draw.polygon(shadow_surf, (0, 0, 0, max(10, min(255, base_alpha))), rel_pts)
+
+    # Downscale và Upscale nội suy bilinear tạo viền mờ mềm mại
+    dw = max(4, w // 4)
+    dh = max(4, h // 4)
+    small = pygame.transform.smoothscale(shadow_surf, (dw, dh))
+    blurred = pygame.transform.smoothscale(small, (w, h))
+
+    surface.blit(blurred, (min_x - pad, min_y - pad))
 
 
 class IsoRenderer:
@@ -148,7 +175,6 @@ class IsoRenderer:
         unscaled_w = max_x - min_x
         unscaled_h = max_y - min_y
 
-        # Khung mục tiêu: chừa lề xung quanh để hiển thị đẹp mắt và không chạm mép
         target_w = max(200.0, float(view_w - 90))
         target_h = max(200.0, float(view_h - 220))
 
@@ -168,7 +194,6 @@ class IsoRenderer:
         self.tile_h = int(self.vy * 2)
         self.block_unit_h = int(self.bh)
 
-        # Căn giữa bàn cờ trong khung (0 -> view_w, 0 -> view_h)
         scaled_min_x = min_x * self.scale
         scaled_max_x = max_x * self.scale
         scaled_min_y = min_y * self.scale
@@ -187,14 +212,22 @@ class IsoRenderer:
         origin_y: Optional[int] = None,
         z: float = 0.0
     ) -> Tuple[int, int]:
-        """
-        Chuyển đổi tọa độ 3D ma trận (row, col, z) sang tọa độ màn hình (x, y).
-        """
+        """Chuyển đổi tọa độ 3D ma trận (row, col, z) sang tọa độ màn hình (x, y)."""
         ox = self.origin_x if origin_x is None else origin_x
         oy = self.origin_y if origin_y is None else origin_y
         x = ox + c * self.ux + r * self.vx
         y = oy + c * self.uy + r * self.vy - z * self.bh
         return (int(x), int(y))
+
+    @staticmethod
+    def calc_depth(r: float, c: float) -> float:
+        """
+        Tính toán độ sâu (depth) thực tế trong không gian 3D Isometric chuẩn Bloxorz.
+        Hệ số dựa trên vector cơ sở: V_BASE_Y = 0.3779 và U_BASE_Y = -0.1585.
+        Tăng r làm tăng depth (tiến về phía gần người nhìn).
+        Giảm c làm tăng depth (tiến về phía gần người nhìn ở bên trái).
+        """
+        return r * 3779.0 - c * 1585.0
 
     def render_background(self, surface: pygame.Surface, width: int = 820, height: int = 780):
         """Vẽ nền dải gradient đỏ huyền thoại của Bloxorz."""
@@ -229,10 +262,13 @@ class IsoRenderer:
         front_color: Tuple[int, int, int],
         depth: Optional[int] = None,
         draw_border: bool = True,
-        z_offset_px: int = 0
+        z_offset_px: int = 0,
+        draw_left: bool = True,
+        draw_front: bool = True
     ):
         """
-        Vẽ một ô sàn 3D theo 4 đỉnh hình bình hành chuẩn góc nhìn Bloxorz.
+        Vẽ một ô sàn 3D. Chỉ vẽ mặt hông trái/trước khi mép đó tiếp giáp với vực thẳm
+        (2 ô gạch chạm nhau trên cùng mặt phẳng thì không vẽ bóng đổ gờ nổi).
         """
         d = self.tile_d if depth is None else depth
 
@@ -249,13 +285,15 @@ class IsoRenderer:
             p3 = (p3[0], p3[1] + z_offset_px)
 
         if d > 0:
-            # Mặt hông trái: từ p0 sang p3
-            left_pts = [p0, p3, (p3[0], p3[1] + d), (p0[0], p0[1] + d)]
-            pygame.draw.polygon(surface, left_color, left_pts)
+            # Mặt hông trái: từ p0 sang p3 (chỉ vẽ khi bên trái là mép vực)
+            if draw_left:
+                left_pts = [p0, p3, (p3[0], p3[1] + d), (p0[0], p0[1] + d)]
+                pygame.draw.polygon(surface, left_color, left_pts)
 
-            # Mặt hông trước: từ p3 sang p2
-            front_pts = [p3, p2, (p2[0], p2[1] + d), (p3[0], p3[1] + d)]
-            pygame.draw.polygon(surface, front_color, front_pts)
+            # Mặt hông trước: từ p3 sang p2 (chỉ vẽ khi phía trước là mép vực)
+            if draw_front:
+                front_pts = [p3, p2, (p2[0], p2[1] + d), (p3[0], p3[1] + d)]
+                pygame.draw.polygon(surface, front_color, front_pts)
 
         # Mặt nóc ô sàn
         top_pts = [p0, p1, p2, p3]
@@ -271,14 +309,30 @@ class IsoRenderer:
         origin_x: int,
         origin_y: int,
         tile_offsets: Optional[dict] = None,
-        hidden_tiles: Optional[set] = None
+        hidden_tiles: Optional[set] = None,
+        max_depth: Optional[float] = None,
+        min_depth: Optional[float] = None
     ):
         """
         Vẽ toàn bộ bản đồ theo thứ tự độ sâu từ xa tới gần.
+        Hỗ trợ lọc min_depth và max_depth để các ô sàn phía trước có thể che khuất nhân vật khi rơi.
+        2 ô gạch chạm nhau được render phẳng liền lạc không bị bóng gờ ngăn cách.
         """
         rows, cols = map_data.rows, map_data.cols
 
-        # Lấy danh sách tất cả các ô cần vẽ và sắp xếp theo depth
+        def has_active_tile(tr: int, tc: int) -> bool:
+            """Kiểm tra xem tại (tr, tc) có ô sàn hợp lệ đang hiển thị hay không."""
+            if not (0 <= tr < rows and 0 <= tc < cols):
+                return False
+            if hidden_tiles and (tr, tc) in hidden_tiles:
+                return False
+            if (tr, tc) in map_data.bridge_indices:
+                idx = map_data.bridge_indices[(tr, tc)]
+                return bool(bridge_state[idx])
+            val = map_data.board[tr][tc]
+            return val != 0 and val != 9  # Ô 9 là lỗ đích, không có mặt sàn
+
+        # Thu thập các ô sàn cần vẽ
         all_cells = []
         for r in range(rows):
             for c in range(cols):
@@ -287,15 +341,35 @@ class IsoRenderer:
                 is_bridge = (r, c) in map_data.bridge_indices
                 tile_val = map_data.board[r][c]
                 if tile_val != 0 or is_bridge:
-                    all_cells.append((r, c, tile_val, is_bridge))
+                    depth = self.calc_depth(r, c)
+                    all_cells.append((r, c, tile_val, is_bridge, depth))
 
-        # Sort theo depth: r càng nhỏ ở càng xa, c càng nhỏ ở càng xa
-        all_cells.sort(key=lambda item: item[0] * 100 + item[1])
+        # Sort theo depth: r nhỏ ở xa vẽ trước, r lớn ở gần vẽ sau
+        all_cells.sort(key=lambda item: item[4])
 
-        for r, c, tile_val, is_bridge in all_cells:
+        for r, c, tile_val, is_bridge, depth in all_cells:
+            # Lọc theo khoảng depth nếu có yêu cầu (phục vụ che khuất khi rơi)
+            if max_depth is not None and depth > max_depth:
+                continue
+            if min_depth is not None and depth <= min_depth:
+                continue
+
             z_off = 0
             if tile_offsets and (r, c) in tile_offsets:
                 z_off = int(tile_offsets[(r, c)])
+
+            # Xác định xem ô (r, c) có cần vẽ mặt hông trái và mặt hông trước hay không
+            draw_left = not has_active_tile(r, c - 1)
+            draw_front = not has_active_tile(r + 1, c)
+
+            # Nếu đang có animation sàn rơi (tile_offsets) và ô lân cận rơi sâu hơn ô hiện tại
+            if tile_offsets:
+                z_left = int(tile_offsets.get((r, c - 1), 0))
+                z_front = int(tile_offsets.get((r + 1, c), 0))
+                if z_left > z_off + 2:
+                    draw_left = True
+                if z_front > z_off + 2:
+                    draw_front = True
 
             if is_bridge:
                 idx = map_data.bridge_indices[(r, c)]
@@ -304,7 +378,9 @@ class IsoRenderer:
                     self.draw_iso_tile(
                         self.screen, r, c, origin_x, origin_y,
                         COLOR_BRIDGE_OPEN_TOP, COLOR_BRIDGE_OPEN_LEFT, COLOR_BRIDGE_OPEN_FRONT,
-                        z_offset_px=z_off
+                        z_offset_px=z_off,
+                        draw_left=draw_left,
+                        draw_front=draw_front
                     )
                 else:
                     # Cầu đóng: vẽ viền mờ rỗng
@@ -325,7 +401,9 @@ class IsoRenderer:
                 self.draw_iso_tile(
                     self.screen, r, c, origin_x, origin_y,
                     COLOR_TILE_TOP, COLOR_TILE_LEFT, COLOR_TILE_FRONT,
-                    z_offset_px=z_off
+                    z_offset_px=z_off,
+                    draw_left=draw_left,
+                    draw_front=draw_front
                 )
 
             elif tile_val == 2:
@@ -333,7 +411,9 @@ class IsoRenderer:
                 self.draw_iso_tile(
                     self.screen, r, c, origin_x, origin_y,
                     COLOR_FRAGILE_TOP, COLOR_FRAGILE_LEFT, COLOR_FRAGILE_FRONT,
-                    z_offset_px=z_off
+                    z_offset_px=z_off,
+                    draw_left=draw_left,
+                    draw_front=draw_front
                 )
                 # Viền kẻ nứt biểu tượng ô vỡ
                 p0 = self.grid_to_iso(r, c, origin_x, origin_y)
@@ -344,7 +424,7 @@ class IsoRenderer:
                 pygame.draw.line(self.screen, (255, 175, 110), p0, p2, 1)
 
             elif tile_val == 9:
-                # Lỗ đích (Goal Hole sâu thẳm)
+                # Lỗ đích (Goal Hole sâu thẳm theo chuẩn game gốc)
                 p0 = self.grid_to_iso(r, c, origin_x, origin_y)
                 p1 = self.grid_to_iso(r, c + 1, origin_x, origin_y)
                 p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
@@ -355,33 +435,37 @@ class IsoRenderer:
                     p2 = (p2[0], p2[1] + z_off)
                     p3 = (p3[0], p3[1] + z_off)
 
-                # Vẽ đáy lỗ sâu
+                # 1. Toàn bộ miệng lỗ là lòng hố sâu thẳm tối màu
                 hole_face = [p0, p1, p2, p3]
                 pygame.draw.polygon(self.screen, COLOR_GOAL_CORE, hole_face)
 
-                inner_depth = int(self.bh * 0.6)
-                # Thành sâu bên trong (vách sau: p0 -> p1)
-                inner_back = [p0, p1, (p1[0], p1[1] + inner_depth), (p0[0], p0[1] + inner_depth)]
-                pygame.draw.polygon(self.screen, COLOR_GOAL_INNER_BACK, inner_back)
+                d = self.tile_d
+                if d > 0:
+                    # 2. Vách sau bên trong thành hố: từ p0 sang p1 hạ xuống d (độ dày sàn)
+                    b0 = (p0[0], p0[1] + d)
+                    b1 = (p1[0], p1[1] + d)
+                    pygame.draw.polygon(self.screen, (115, 125, 135), [p0, p1, b1, b0])
 
-                # Thành sâu bên trong (vách phải: p1 -> p2)
-                inner_right = [p1, p2, (p2[0], p2[1] + inner_depth), (p1[0], p1[1] + inner_depth)]
-                pygame.draw.polygon(self.screen, COLOR_GOAL_INNER_RIGHT, inner_right)
+                    # 3. Vách phải bên trong thành hố: từ p1 sang p2 hạ xuống d (độ dày sàn)
+                    b2 = (p2[0], p2[1] + d)
+                    pygame.draw.polygon(self.screen, (90, 100, 110), [p1, p2, b2, b1])
 
-                pygame.draw.polygon(self.screen, COLOR_GOAL_BORDER, hole_face, 1)
+                # 4. Viền miệng lỗ đích
+                pygame.draw.polygon(self.screen, COLOR_TILE_BORDER, hole_face, 1)
 
             elif tile_val in (3, 4, 5, 6, 7, 8):
                 # Công tắc
                 self.draw_iso_tile(
                     self.screen, r, c, origin_x, origin_y,
                     COLOR_TILE_TOP, COLOR_TILE_LEFT, COLOR_TILE_FRONT,
-                    z_offset_px=z_off
+                    z_offset_px=z_off,
+                    draw_left=draw_left,
+                    draw_front=draw_front
                 )
                 self._render_switch_icon(r, c, origin_x, origin_y, tile_val, z_off)
 
     def _render_switch_icon(self, r: int, c: int, origin_x: int, origin_y: int, tile_val: int, z_off: int = 0):
         """Vẽ biểu tượng công tắc trên mặt sàn hình bình hành."""
-        # Tính tâm hình bình hành
         p0 = self.grid_to_iso(r, c, origin_x, origin_y)
         p1 = self.grid_to_iso(r, c + 1, origin_x, origin_y)
         p2 = self.grid_to_iso(r + 1, c + 1, origin_x, origin_y)
@@ -419,7 +503,7 @@ class IsoRenderer:
         front_color: Tuple[int, int, int],
         draw_shadow: bool = True
     ):
-        """Vẽ hình hộp chữ nhật 3D theo góc nhìn chuẩn Bloxorz."""
+        """Vẽ hình hộp chữ nhật 3D với bóng đổ mờ nhẹ (soft blurred shadow)."""
         def p(r, c, z):
             return self.grid_to_iso(r, c, origin_x, origin_y, z)
 
@@ -434,17 +518,17 @@ class IsoRenderer:
         t2 = p(rmax, cmax, zmax)
         t3 = p(rmax, cmin, zmax)
 
-        # Bóng đổ mềm phía sau bên phải
+        # 1. Bóng đổ mờ nhẹ (Soft Blurred Shadow) phía sau bên phải
         if draw_shadow and zmin >= 0:
-            shadow_surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
             s_pts = [
                 p(rmin + 0.05, cmin + 0.25, 0),
                 p(rmin - 0.45, cmax + 0.75, 0),
                 p(rmax - 0.10, cmax + 0.75, 0),
                 p(rmax + 0.10, cmin + 0.25, 0)
             ]
-            pygame.draw.polygon(shadow_surf, COLOR_SHADOW, s_pts)
-            self.screen.blit(shadow_surf, (0, 0))
+            # Alpha mờ dần nếu khối ở trên cao
+            alpha = max(20, int(90 - zmin * 18))
+            draw_soft_shadow(self.screen, s_pts, base_alpha=alpha)
 
         # Mặt trái: b0 -> b3 -> t3 -> t0
         pygame.draw.polygon(self.screen, left_color, [b0, b3, t3, t0])
@@ -520,7 +604,6 @@ class IsoRenderer:
                 )
 
                 if is_active:
-                    # Vòng sáng xung quanh khối đang điều khiển
                     p_mid = self.grid_to_iso(r + 0.5, c + 0.5, origin_x, origin_y, z=1.0)
                     rad = int(self.scale * 0.45 + math.sin(pulse_val * 4.0) * 3)
                     pygame.draw.circle(self.screen, (255, 235, 100), p_mid, rad, 2)

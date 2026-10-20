@@ -313,6 +313,16 @@ class BloxorzApp:
             lambda: self.set_speed(0.12), self.font_btn
         ))
 
+    def get_stage_display_name(self) -> str:
+        """Trả về tên hiển thị chuẩn đẹp của màn chơi (ví dụ: 'map01' -> 'Map 01')."""
+        if not self.map_data or not self.map_data.map_name:
+            return "Unknown"
+        name = self.map_data.map_name
+        if name.lower().startswith("map"):
+            suffix = name[3:].lstrip("_- ")
+            return f"Map {suffix}" if suffix else "Map"
+        return name
+
     def load_level(self, idx: int):
         """Tải một màn chơi từ danh sách file."""
         if not self.level_files:
@@ -610,6 +620,8 @@ class BloxorzApp:
             # Di chuyển thất bại -> kiểm tra rơi do ô cam vỡ hay rơi mép sàn
             is_fragile = False
             fragile_cell = None
+            calc_fall_depth = None
+
             if current_block.orientation != Orientation.SPLIT:
                 try:
                     test_rolled = current_block.roll(direction)
@@ -619,6 +631,31 @@ class BloxorzApp:
                             if self.map_data.board[r][c] == 2:
                                 is_fragile = True
                                 fragile_cell = (r, c)
+
+                    # Tính toán chính xác fall_depth dựa trên không gian 3D Isometric chuẩn
+                    cells = current_block.occupied_cells()
+                    if current_block.orientation == Orientation.SPLIT:
+                        cr, cc = (current_block.r, current_block.c) if active_idx == 0 else (current_block.r1, current_block.c1)
+                        r_min = r_max = cr
+                        c_min = c_max = cc
+                    else:
+                        r_min = min(r for r, c in cells) if cells else current_block.r
+                        r_max = max(r for r, c in cells) if cells else current_block.r
+                        c_min = min(c for r, c in cells) if cells else current_block.c
+                        c_max = max(c for r, c in cells) if cells else current_block.c
+
+                    if direction == Direction.UP:
+                        # Rơi lật ngược ra sau (hàng r < r_min)
+                        calc_fall_depth = (r_min - 1) * 3779.0 - c_max * 1585.0 - 1.0
+                    elif direction == Direction.DOWN:
+                        # Rơi chúi về phía trước (hàng r > r_max)
+                        calc_fall_depth = (r_max + 1) * 3779.0 - c_min * 1585.0
+                    elif direction == Direction.LEFT:
+                        # Rơi sang mép trái (cột c < c_min)
+                        calc_fall_depth = r_max * 3779.0 - (c_min - 1) * 1585.0
+                    elif direction == Direction.RIGHT:
+                        # Rơi sang mép phải (cột c > c_max)
+                        calc_fall_depth = r_min * 3779.0 - (c_max + 1) * 1585.0 - 1.0
                 except Exception:
                     pass
 
@@ -639,7 +676,8 @@ class BloxorzApp:
                     direction,
                     cube_index=active_idx,
                     duration=0.65,
-                    on_complete=on_fall_done
+                    on_complete=on_fall_done,
+                    fall_depth=calc_fall_depth
                 )
 
 
@@ -800,39 +838,68 @@ class BloxorzApp:
                 origin_x = self.renderer.origin_x
                 origin_y = self.renderer.origin_y
 
-                self.renderer.render_board(
-                    self.map_data,
-                    self.game_state.bridge_state,
-                    origin_x,
-                    origin_y,
-                    tile_offsets=self.board_animator.tile_offsets if self.board_animator.is_animating() else None,
-                    hidden_tiles=self.board_animator.hidden_tiles if self.board_animator.is_animating() else None
-                )
+                should_occlude = self.animator.is_animating() and self.animator.should_occlude_falling()
 
-                if self.board_animator.is_animating():
-                    if self.board_animator.should_render_block():
-                        z_off = self.board_animator.get_spawn_z_offset()
-                        self.renderer.render_block(
-                            self.game_state.block,
-                            origin_x,
-                            origin_y,
-                            pulse_val=pulse_val,
-                            z_offset=z_off
-                        )
-                elif self.animator.is_animating():
+                if should_occlude:
+                    fall_depth = self.animator.get_fall_depth()
+                    # 1. Vẽ các ô sàn ở phía sau khối rơi
+                    self.renderer.render_board(
+                        self.map_data,
+                        self.game_state.bridge_state,
+                        origin_x,
+                        origin_y,
+                        max_depth=fall_depth
+                    )
+                    # 2. Vẽ khối đang rơi
                     self.animator.render(
                         self.screen,
                         origin_x,
                         origin_y,
                         self.renderer
                     )
-                elif not self.game_over and not self.game_won and not self.transition_active:
-                    self.renderer.render_block(
-                        self.game_state.block,
+                    # 3. Vẽ các ô sàn ở phía trước khối rơi (tự động che khuất khối rơi!)
+                    self.renderer.render_board(
+                        self.map_data,
+                        self.game_state.bridge_state,
                         origin_x,
                         origin_y,
-                        pulse_val=pulse_val
+                        min_depth=fall_depth
                     )
+                else:
+                    # Vẽ toàn bộ sàn bình thường
+                    self.renderer.render_board(
+                        self.map_data,
+                        self.game_state.bridge_state,
+                        origin_x,
+                        origin_y,
+                        tile_offsets=self.board_animator.tile_offsets if self.board_animator.is_animating() else None,
+                        hidden_tiles=self.board_animator.hidden_tiles if self.board_animator.is_animating() else None
+                    )
+
+                    if self.board_animator.is_animating():
+                        if self.board_animator.should_render_block():
+                            z_off = self.board_animator.get_spawn_z_offset()
+                            self.renderer.render_block(
+                                self.game_state.block,
+                                origin_x,
+                                origin_y,
+                                pulse_val=pulse_val,
+                                z_offset=z_off
+                            )
+                    elif self.animator.is_animating():
+                        self.animator.render(
+                            self.screen,
+                            origin_x,
+                            origin_y,
+                            self.renderer
+                        )
+                    elif not self.game_over and not self.game_won and not self.transition_active:
+                        self.renderer.render_block(
+                            self.game_state.block,
+                            origin_x,
+                            origin_y,
+                            pulse_val=pulse_val
+                        )
 
                 # Vẽ hiệu ứng phụ (mảnh vỡ sàn nứt vỡ, quầng sáng đích)
                 self.animator.render_overlays(
@@ -939,7 +1006,7 @@ class BloxorzApp:
 
         x = 835
         # Tiêu đề màn chơi
-        stage_name = self.map_data.map_name if self.map_data else "Unknown"
+        stage_name = self.get_stage_display_name()
         title_surf = self.font_title.render(f"Bloxorz Solver: {stage_name}", True, TEXT_WHITE)
         self.screen.blit(title_surf, (x, 15))
 

@@ -2,10 +2,11 @@
 Module: animator.py
 Mô tả: Quản lý và dựng hình các hiệu ứng chuyển động (Animation) 3D cho khối Bloxorz:
       1. Rolling Animation: Lăn lật 3D 90 độ quanh trục bản lề (pivot edge) trên mặt sàn
-         với bóng đổ động và đánh sáng bề mặt 3D chân thực theo góc nhìn Bloxorz gốc.
-      2. Victory Sink Animation: Khối đứng thẳng thụt chìm dần vào lòng lỗ đích khi thắng cuộc.
+         với bóng đổ mờ nhẹ (soft blurred shadow) và đánh sáng bề mặt 3D chân thực.
+      2. Victory Sink Animation: Khối đứng thẳng thụt chìm dần vào lòng lỗ đích khi thắng cuộc,
+         bị miệng lỗ và các ô sàn phía trước che khuất khi chìm xuống.
       3. Edge Fall Animation: Khối lật quá đà ra khỏi sàn, mất thăng bằng và rơi tự do
-         xoay nhào lộn vào khoảng không hư vô theo gia tốc trọng trường.
+         xoay nhào lộn vào khoảng không hư vô theo gia tốc trọng trường, bị các ô sàn phía trước che khuất.
       4. Fragile Collapse Animation: Ô cam dễ vỡ nứt sụp, sinh chùm mảnh vỡ hạt (particles)
          và khối rơi thẳng đứng xuống vực sâu.
 """
@@ -36,6 +37,7 @@ from src.gui.renderer import (
     COLOR_FRAGILE_TOP,
     COLOR_FRAGILE_LEFT,
     COLOR_FRAGILE_FRONT,
+    draw_soft_shadow,
 )
 
 
@@ -95,6 +97,56 @@ class BlockAnimator:
         """Kiểm tra có animation nào đang chạy hay không."""
         return self.state != self.STATE_IDLE
 
+    def is_falling(self) -> bool:
+        """Kiểm tra xem khối có đang trong trạng thái rơi xuống vực sâu hay không."""
+        return self.state in (self.STATE_FALL_GOAL, self.STATE_FALL_EDGE, self.STATE_FALL_FRAGILE)
+
+    def should_occlude_falling(self) -> bool:
+        """
+        Kiểm tra xem khối rơi có cần bị các ô sàn phía trước che khuất hay không:
+        Tất cả các trường hợp rơi (hố đích, ô cam vỡ, rơi mép sàn ở mọi hướng)
+        đều được phân tầng Painter's Algorithm để sàn phía trước che khuất khối rơi chân thực.
+        """
+        return self.is_falling()
+
+    def get_fall_depth(self) -> float:
+        """
+        Tính toán độ sâu (depth) của khối đang rơi để Painter's Algorithm phân chia
+        các ô sàn phía sau và phía trước khối rơi một cách chuẩn xác.
+        """
+        if hasattr(self, 'custom_fall_depth') and self.custom_fall_depth is not None:
+            return self.custom_fall_depth
+
+        if self.state == self.STATE_FALL_GOAL and self.goal_cell:
+            gr, gc = self.goal_cell
+            return gr * 3779.0 - gc * 1585.0
+
+        elif self.state == self.STATE_FALL_FRAGILE and self.fragile_cell:
+            fr, fc = self.fragile_cell
+            return fr * 3779.0 - fc * 1585.0
+
+        elif self.state == self.STATE_FALL_EDGE and self.block:
+            cells = self.block.occupied_cells()
+            r_min = min(r for r, c in cells) if cells else self.block.r
+            r_max = max(r for r, c in cells) if cells else self.block.r
+            c_min = min(c for r, c in cells) if cells else self.block.c
+            c_max = max(c for r, c in cells) if cells else self.block.c
+
+            if self.direction == Direction.UP:
+                # Khối rơi lật ngược ra sau (hàng r < r_min)
+                return (r_min - 1) * 3779.0 - c_max * 1585.0 - 1.0
+            elif self.direction == Direction.DOWN:
+                # Khối rơi chúi về phía trước (hàng r > r_max)
+                return (r_max + 1) * 3779.0 - c_min * 1585.0
+            elif self.direction == Direction.LEFT:
+                # Khối rơi sang mép trái (cột c < c_min)
+                return r_max * 3779.0 - (c_min - 1) * 1585.0
+            elif self.direction == Direction.RIGHT:
+                # Khối rơi sang mép phải (cột c > c_max)
+                return r_min * 3779.0 - (c_max + 1) * 1585.0 - 1.0
+
+        return 999999.0
+
     def reset(self):
         """Hủy bỏ toàn bộ animation hiện tại và đưa về trạng thái nghỉ."""
         self.state = self.STATE_IDLE
@@ -107,6 +159,7 @@ class BlockAnimator:
         self.particles.clear()
         self.fragile_cell = None
         self.goal_cell = None
+        self.custom_fall_depth = None
 
     def finish_now(self):
         """Hoàn tất ngay animation hiện tại (snap to end) để không bị nghẽn input phím."""
@@ -157,7 +210,8 @@ class BlockAnimator:
         direction: Direction,
         cube_index: int = 0,
         duration: float = 0.65,
-        on_complete: Optional[Callable[[], None]] = None
+        on_complete: Optional[Callable[[], None]] = None,
+        fall_depth: Optional[float] = None
     ):
         """Kích hoạt animation lật quá mép và rơi tự do vào vực thẳm."""
         self.state = self.STATE_FALL_EDGE
@@ -168,6 +222,7 @@ class BlockAnimator:
         self.elapsed = 0.0
         self.progress = 0.0
         self.on_complete = on_complete
+        self.custom_fall_depth = fall_depth
 
     def start_fall_fragile(
         self,
@@ -350,7 +405,7 @@ class BlockAnimator:
         draw_shadow: bool = True
     ):
         """
-        Vẽ một hình hộp 3D tùy ý xác định bởi 8 đỉnh với đổ bóng và đổ màu chuẩn Bloxorz.
+        Vẽ một hình hộp 3D tùy ý xác định bởi 8 đỉnh với bóng đổ mờ nhẹ (soft blur).
         """
         if not pygame or surface is None:
             return
@@ -361,21 +416,19 @@ class BlockAnimator:
             for r, c, z in verts3d
         ]
 
-        # 1. Vẽ bóng đổ mềm trên sàn
+        # 1. Vẽ bóng đổ mờ nhẹ (Soft Blurred Shadow) trên sàn
         if draw_shadow:
             shadow_pts = []
             for i in [0, 1, 2, 3]:
                 r, c, _ = verts3d[i]
                 shadow_pts.append(self._iso_project(r, c, 0.0, origin_x, origin_y, renderer))
             if abs(self._polygon_signed_area_2d(shadow_pts)) > 1.0:
-                shadow_surf = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
                 # Dịch nhẹ bóng sang phía sau bên phải
                 s_off_pts = [
                     (p[0] + 4, p[1] - 3)
                     for p in shadow_pts
                 ]
-                pygame.draw.polygon(shadow_surf, (0, 0, 0, 75), s_off_pts)
-                surface.blit(shadow_surf, (0, 0))
+                draw_soft_shadow(surface, s_off_pts, base_alpha=75)
 
         # 6 mặt của khối
         faces_def = [
@@ -489,8 +542,8 @@ class BlockAnimator:
             act_verts = self._make_cuboid_vertices(act_rmin, act_rmax, act_cmin, act_cmax, act_zmin, act_zmax)
             act_rotated = self._rotate_box_vertices(act_verts, self.direction, theta, act_rmin, act_rmax, act_cmin, act_cmax)
 
-            act_depth = act_rmin * 10.0 + act_cmin
-            other_depth = other_rmin * 10.0 + other_cmin
+            act_depth = act_rmin * 3779.0 - act_cmin * 1585.0
+            other_depth = other_rmin * 3779.0 - other_cmin * 1585.0
 
             if other_depth < act_depth:
                 self._render_3d_box(surface, other_verts, origin_x, origin_y, renderer,
@@ -504,23 +557,38 @@ class BlockAnimator:
                                     is_cube0=(other_idx == 0), is_cube1=(other_idx == 1))
 
     def _render_fall_goal(self, surface, origin_x, origin_y, renderer, p: float):
-        """Khối chìm sâu dần thẳng đứng vào lòng lỗ đích và biến mất hoàn toàn."""
-        if p >= 0.90:
-            return  # Đã rớt đủ sâu và biến mất
+        """Khối chìm sâu dần thẳng đứng vào lòng lỗ đích (giữ nguyên kích thước chuẩn, không thu nhỏ)."""
+        if p >= 0.70:
+            return  # Đã chìm hẳn vào lòng lỗ và biến mất
 
         rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block)
-        z_offset = -5.0 * (p ** 1.6)
+        t_sink = min(1.0, p / 0.70)
+        z_offset = -2.1 * (t_sink ** 1.25)
 
-        scale = max(0.1, 1.0 - (p ** 1.3) * 0.7)
-        mid_r = (rmin + rmax) / 2.0
-        mid_c = (cmin + cmax) / 2.0
-        s_rmin = mid_r + (rmin - mid_r) * scale
-        s_rmax = mid_r + (rmax - mid_r) * scale
-        s_cmin = mid_c + (cmin - mid_c) * scale
-        s_cmax = mid_c + (cmax - mid_c) * scale
+        # Giữ nguyên kích thước 100%, không thu nhỏ
+        verts = self._make_cuboid_vertices(rmin, rmax, cmin, cmax, zmin + z_offset, zmax + z_offset)
 
-        verts = self._make_cuboid_vertices(s_rmin, s_rmax, s_cmin, s_cmax, zmin + z_offset, zmax + z_offset)
+        # Giới hạn vùng hiển thị khối chìm trong phạm vi miệng lỗ đích
+        old_clip = surface.get_clip() if hasattr(surface, 'get_clip') else None
+        if self.goal_cell and hasattr(surface, 'set_clip'):
+            gr, gc = self.goal_cell
+            pts = [
+                self._iso_project(gr, gc, 0.0, origin_x, origin_y, renderer),
+                self._iso_project(gr, gc + 1, 0.0, origin_x, origin_y, renderer),
+                self._iso_project(gr + 1, gc + 1, 0.0, origin_x, origin_y, renderer),
+                self._iso_project(gr + 1, gc, 0.0, origin_x, origin_y, renderer),
+            ]
+            min_x = min(pt[0] for pt in pts) - 2
+            max_x = max(pt[0] for pt in pts) + 2
+            min_y = min(pt[1] for pt in pts) - 220
+            inner_depth = int(renderer.bh * 0.6) if hasattr(renderer, 'bh') else 26
+            max_y = max(pt[1] for pt in pts) + inner_depth
+            surface.set_clip(pygame.Rect(min_x, min_y, max_x - min_x, max_y - min_y))
+
         self._render_3d_box(surface, verts, origin_x, origin_y, renderer, draw_shadow=False)
+
+        if hasattr(surface, 'set_clip'):
+            surface.set_clip(old_clip)
 
     def _render_fall_edge(self, surface, origin_x, origin_y, renderer, p: float):
         """Khối lật nghiêng ra mép rồi rơi tự do xoay vòng xuống vực thẳm."""
@@ -531,7 +599,7 @@ class BlockAnimator:
             local_t = p / 0.35
             theta = local_t * (math.pi / 3.0)
             rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax)
-            self._render_3d_box(surface, rotated, origin_x, origin_y, renderer)
+            self._render_3d_box(surface, rotated, origin_x, origin_y, renderer, draw_shadow=False)
         else:
             t_fall = (p - 0.35) / 0.65
             theta = (math.pi / 3.0) + t_fall * math.pi * 0.8

@@ -43,9 +43,9 @@ Source/
 │   │   ├── bfs.py              # BFS (Goal test on generation)
 │   │   ├── dfs.py              # DFS & IDS (Depth-Limited & Iterative Deepening)
 │   │   ├── ucs.py              # Uniform-Cost Search (Ưu tiên chi phí tích lũy g(n))
-│   │   ├── astar.py            # A* với Heuristic khoảng cách lưới nới lỏng
-│   │   └── heuristics.py       # Tính toán hàm Heuristic Admissible & Consistent
+│   │   └── astar.py            # A* với Heuristic khoảng cách lưới nới lỏng (Relaxed Grid BFS)
 │   └── gui/                    # Giao diện đồ họa Pygame & Animation 3D
+│       ├── icon.png            # Biểu tượng khối hộp 3D Isometric chuẩn nét cao
 │       ├── renderer.py         # Dựng hình 3D Isometric chuẩn Bloxorz, nền gradient đỏ, adaptive scaling
 │       ├── animator.py         # Hoạt ảnh lăn khối 90°, thụt hố đích, rơi vực và sập sàn cam nứt vỡ
 │       ├── board_animator.py   # Chuỗi hoạt ảnh tái lập màn chơi (Board Disintegration & Rebuild)
