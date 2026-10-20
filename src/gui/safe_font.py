@@ -42,6 +42,13 @@ class SafeFont:
             # Danh sách font hệ thống ưu tiên theo từng nền tảng
             candidate_paths = []
             if sys.platform == "darwin":
+                if self.bold:
+                    candidate_paths.extend([
+                        "/System/Library/Fonts/SFNSBold.ttf",
+                        "/System/Library/Fonts/SFCompactBold.ttf",
+                        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                        "/Library/Fonts/Arial Bold.ttf"
+                    ])
                 candidate_paths.extend([
                     "/System/Library/Fonts/Helvetica.ttc",
                     "/System/Library/Fonts/SFNS.ttf",
@@ -49,12 +56,23 @@ class SafeFont:
                     "/Library/Fonts/Arial.ttf"
                 ])
             elif sys.platform == "win32":
+                if self.bold:
+                    candidate_paths.extend([
+                        r"C:\Windows\Fonts\segoeuib.ttf",
+                        r"C:\Windows\Fonts\seguisb.ttf",
+                        r"C:\Windows\Fonts\arialbd.ttf"
+                    ])
                 candidate_paths.extend([
                     r"C:\Windows\Fonts\segoeui.ttf",
                     r"C:\Windows\Fonts\arial.ttf",
                     r"C:\Windows\Fonts\tahoma.ttf"
                 ])
             else:
+                if self.bold:
+                    candidate_paths.extend([
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+                    ])
                 candidate_paths.extend([
                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"

@@ -47,6 +47,7 @@ TEXT_ACCENT = (88, 166, 255)
 TEXT_SUCCESS = (63, 185, 80)
 TEXT_DANGER = (248, 81, 73)
 TEXT_WARN = (210, 153, 34)
+TEXT_GOLD = (255, 215, 0)
 
 BTN_DEFAULT = (35, 43, 60)
 BTN_HOVER = (48, 58, 80)
@@ -141,7 +142,7 @@ class BloxorzApp:
         self.board_animator = BoardRestartAnimator()
 
         # Khởi tạo font chữ an toàn bằng SafeFont
-        self.font_title = get_safe_font("segoeui", 20, bold=True)
+        self.font_title = get_safe_font("segoeui", 22, bold=True)
         self.font_h2 = get_safe_font("segoeui", 16, bold=True)
         self.font_body = get_safe_font("segoeui", 13)
         self.font_btn = get_safe_font("segoeui", 13, bold=True)
@@ -1005,9 +1006,12 @@ class BloxorzApp:
         pygame.draw.line(self.screen, PANEL_BORDER, (820, 0), (820, self.height), 2)
 
         x = 835
-        # Tiêu đề màn chơi
+        # Tiêu đề màn chơi nổi bật với màu vàng rực rỡ và bóng đổ 3D
         stage_name = self.get_stage_display_name()
-        title_surf = self.font_title.render(f"Bloxorz Solver: {stage_name}", True, TEXT_WHITE)
+        title_text = f"Bloxorz Solver: {stage_name}"
+        shadow_surf = self.font_title.render(title_text, True, (8, 10, 16))
+        title_surf = self.font_title.render(title_text, True, TEXT_GOLD)
+        self.screen.blit(shadow_surf, (x + 1, 16))
         self.screen.blit(title_surf, (x, 15))
 
         # Tiêu đề nhóm thuật toán
