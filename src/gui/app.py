@@ -539,40 +539,122 @@ class BloxorzApp:
                 on_complete=on_manual_roll_done
             )
         else:
-            # Di chuyển thất bại -> kiểm tra rơi do ô cam vỡ hay rơi mép sàn
-            is_fragile = False
-            fragile_cell = None
-            if current_block.orientation != Orientation.SPLIT:
-                try:
-                    test_rolled = current_block.roll(direction)
-                    if test_rolled.orientation == Orientation.STANDING:
-                        r, c = test_rolled.r, test_rolled.c
-                        if 0 <= r < self.map_data.rows and 0 <= c < self.map_data.cols:
-                            if self.map_data.board[r][c] == 2:
-                                is_fragile = True
-                                fragile_cell = (r, c)
-                except Exception:
-                    pass
-
+            # Di chuyển thất bại -> kiểm tra nguyên nhân rơi
             def on_fall_done():
                 # Khi rơi xong (thua cuộc) -> kích hoạt chuỗi hoạt ảnh tái lập màn chơi
                 self.start_board_restart_sequence()
 
-            if is_fragile and fragile_cell:
-                self.animator.start_fall_fragile(
-                    current_block,
-                    fragile_cell,
-                    duration=0.65,
-                    on_complete=on_fall_done
-                )
+            test_rolled = None
+            if current_block.orientation != Orientation.SPLIT:
+                try:
+                    test_rolled = current_block.roll(direction)
+                except Exception:
+                    pass
             else:
-                self.animator.start_fall_edge(
+                try:
+                    test_rolled = current_block.move_cube(active_idx, direction)
+                except Exception:
+                    pass
+
+            is_fragile = False
+            fragile_cell = None
+            if test_rolled is not None and current_block.orientation != Orientation.SPLIT:
+                if test_rolled.orientation == Orientation.STANDING:
+                    r, c = test_rolled.r, test_rolled.c
+                    if 0 <= r < self.map_data.rows and 0 <= c < self.map_data.cols:
+                        if self.map_data.board[r][c] == 2:
+                            is_fragile = True
+                            fragile_cell = (r, c)
+
+            if is_fragile and fragile_cell and test_rolled is not None:
+                # Khối lăn tới ô cam trước, sau đó ô cam sập vỡ và khối chìm xuống vực
+                def on_roll_to_fragile_done():
+                    self.animator.start_fall_fragile(
+                        test_rolled,
+                        fragile_cell,
+                        duration=0.65,
+                        on_complete=on_fall_done
+                    )
+
+                self.animator.start_roll(
                     current_block,
                     direction,
                     cube_index=active_idx,
-                    duration=0.65,
-                    on_complete=on_fall_done
+                    duration=0.15,
+                    on_complete=on_roll_to_fragile_done
                 )
+            else:
+                # Kiểm tra xem khối có lăn trúng 1 ô sàn hợp lệ (1 ô gạch + 1 ô trống) hay không
+                can_roll_onto_tile = False
+                pivot_r = None
+                pivot_c = None
+
+                if test_rolled is not None:
+                    if current_block.orientation == Orientation.STANDING:
+                        cr, cc = current_block.r, current_block.c
+                        # Ô chạm đất đầu tiên tiếp giáp với vị trí đứng cũ
+                        first_cell = None
+                        if direction == Direction.UP:
+                            first_cell = (cr - 1, cc)
+                        elif direction == Direction.DOWN:
+                            first_cell = (cr + 1, cc)
+                        elif direction == Direction.LEFT:
+                            first_cell = (cr, cc - 1)
+                        elif direction == Direction.RIGHT:
+                            first_cell = (cr, cc + 1)
+
+                        if first_cell and self.game_state.is_cell_walkable(first_cell[0], first_cell[1], self.game_state.bridge_state):
+                            can_roll_onto_tile = True
+                            # Trục bản lề lật rơi là mép ngoài của ô gạch hợp lệ đầu tiên
+                            if direction == Direction.UP:
+                                pivot_r = float(cr - 1)
+                            elif direction == Direction.DOWN:
+                                pivot_r = float(cr + 2)
+                            elif direction == Direction.LEFT:
+                                pivot_c = float(cc - 1)
+                            elif direction == Direction.RIGHT:
+                                pivot_c = float(cc + 2)
+
+                    elif current_block.orientation in (Orientation.HORIZONTAL, Orientation.VERTICAL):
+                        occupied = test_rolled.occupied_cells()
+                        walkable_count = sum(
+                            1 for r, c in occupied
+                            if self.game_state.is_cell_walkable(r, c, self.game_state.bridge_state)
+                        )
+                        if walkable_count > 0:
+                            can_roll_onto_tile = True
+
+                if can_roll_onto_tile and test_rolled is not None:
+                    # Khối lăn trúng 1 ô gạch và 1 ô trống:
+                    # 1. Khối hoàn thành bước lăn 90 độ lên ô gạch hợp lệ
+                    # 2. Sau khi chạm sàn, do mất thăng bằng (nửa thân kia ngoài vực) nên khối lật tiếp quanh mép ô gạch và rơi xuống
+                    def on_roll_to_edge_done():
+                        self.animator.start_fall_edge(
+                            test_rolled,
+                            direction,
+                            cube_index=active_idx,
+                            duration=0.65,
+                            pivot_r=pivot_r,
+                            pivot_c=pivot_c,
+                            on_complete=on_fall_done
+                        )
+
+                    self.animator.start_roll(
+                        current_block,
+                        direction,
+                        cube_index=active_idx,
+                        duration=0.15,
+                        on_complete=on_roll_to_edge_done
+                    )
+                else:
+                    # Phía trước ngay mép khối là vực thẳm -> rơi tự do ngay từ mép hiện tại
+                    self.animator.start_fall_edge(
+                        current_block,
+                        direction,
+                        cube_index=active_idx,
+                        duration=0.65,
+                        on_complete=on_fall_done
+                    )
 
 
     def run(self):

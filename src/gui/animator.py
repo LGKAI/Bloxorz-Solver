@@ -105,13 +105,15 @@ class BlockAnimator:
         """
         Kiểm tra xem khối rơi có cần bị các ô sàn phía trước che khuất hay không:
         - Rơi vào lòng hố (GOAL, FRAGILE): Có che khuất (bởi các ô ở hàng phía trước hố).
-        - Rơi ngược ra sau (EDGE UP): Có che khuất (bởi các ô sàn ở hàng phía trước mép rơi).
+        - Rơi ngược ra sau (EDGE UP): Có che khuất (bởi các ô sàn ở hàng phía trước mép rơi)
+          nhưng CHỈ KHI khối đã rơi chìm xuống dưới mặt sàn (progress >= 0.35).
+          Khi progress < 0.35, khối đang lật trên mặt sàn (z >= 0) nên không bị ô gạch sàn đè lên.
         - Rơi ra mép ngoài (EDGE DOWN, LEFT, RIGHT): Không che khuất (khối luôn nằm đè lên mép sàn).
         """
         if self.state in (self.STATE_FALL_GOAL, self.STATE_FALL_FRAGILE):
             return True
         elif self.state == self.STATE_FALL_EDGE:
-            return self.direction == Direction.UP
+            return self.direction == Direction.UP and self.progress >= 0.35
         return False
 
     def get_fall_depth(self) -> float:
@@ -132,8 +134,8 @@ class BlockAnimator:
         elif self.state == self.STATE_FALL_EDGE and self.block:
             if self.direction == Direction.UP:
                 rmin, _, _, _, _, _ = self._get_box_bounds(self.block, self.cube_index)
-                # Toàn bộ các ô ở hàng >= rmin (phía trước khối rơi) vẽ SAU khối để che khối khi rơi ra sau.
-                return (rmin - 0.01) * 100.0
+                pr = self.pivot_r if hasattr(self, 'pivot_r') and self.pivot_r is not None else rmin
+                return (pr - 0.01) * 100.0
 
         return 999999.0
 
@@ -146,6 +148,8 @@ class BlockAnimator:
         self.direction = None
         self.next_game_state = None
         self.on_complete = None
+        self.pivot_r = None
+        self.pivot_c = None
         self.particles.clear()
         self.fragile_cell = None
         self.goal_cell = None
@@ -199,6 +203,8 @@ class BlockAnimator:
         direction: Direction,
         cube_index: int = 0,
         duration: float = 0.65,
+        pivot_r: Optional[float] = None,
+        pivot_c: Optional[float] = None,
         on_complete: Optional[Callable[[], None]] = None
     ):
         """Kích hoạt animation lật quá mép và rơi tự do vào vực thẳm."""
@@ -209,6 +215,8 @@ class BlockAnimator:
         self.duration = duration
         self.elapsed = 0.0
         self.progress = 0.0
+        self.pivot_r = pivot_r
+        self.pivot_c = pivot_c
         self.on_complete = on_complete
 
     def start_fall_fragile(
@@ -295,36 +303,44 @@ class BlockAnimator:
         verts: List[Tuple[float, float, float]],
         direction: Direction,
         theta: float,
-        rmin: float, rmax: float, cmin: float, cmax: float
+        rmin: float, rmax: float, cmin: float, cmax: float,
+        pivot_r: Optional[float] = None,
+        pivot_c: Optional[float] = None
     ) -> List[Tuple[float, float, float]]:
         """
         Quay 8 đỉnh quanh trục bản lề (pivot edge) trên mặt sàn (z = 0) theo hướng lăn.
+        Cho phép chỉ định pivot_r hoặc pivot_c tùy ý khi khối trồi nửa thân ra mép sàn.
         """
         cos_t = math.cos(theta)
         sin_t = math.sin(theta)
         res = []
 
+        pr_max = rmax if pivot_r is None else pivot_r
+        pr_min = rmin if pivot_r is None else pivot_r
+        pc_max = cmax if pivot_c is None else pivot_c
+        pc_min = cmin if pivot_c is None else pivot_c
+
         for r, c, z in verts:
             if direction == Direction.RIGHT:
-                dc = c - cmax
+                dc = c - pc_max
                 dc_new = dc * cos_t + z * sin_t
                 z_new = -dc * sin_t + z * cos_t
-                res.append((r, cmax + dc_new, z_new))
+                res.append((r, pc_max + dc_new, z_new))
             elif direction == Direction.LEFT:
-                dc = c - cmin
+                dc = c - pc_min
                 dc_new = dc * cos_t - z * sin_t
                 z_new = dc * sin_t + z * cos_t
-                res.append((r, cmin + dc_new, z_new))
+                res.append((r, pc_min + dc_new, z_new))
             elif direction == Direction.DOWN:
-                dr = r - rmax
+                dr = r - pr_max
                 dr_new = dr * cos_t + z * sin_t
                 z_new = -dr * sin_t + z * cos_t
-                res.append((rmax + dr_new, c, z_new))
+                res.append((pr_max + dr_new, c, z_new))
             elif direction == Direction.UP:
-                dr = r - rmin
+                dr = r - pr_min
                 dr_new = dr * cos_t - z * sin_t
                 z_new = dr * sin_t + z * cos_t
-                res.append((rmin + dr_new, c, z_new))
+                res.append((pr_min + dr_new, c, z_new))
             else:
                 res.append((r, c, z))
 
@@ -581,11 +597,13 @@ class BlockAnimator:
         """Khối lật nghiêng ra mép rồi rơi tự do xoay vòng xuống vực thẳm."""
         rmin, rmax, cmin, cmax, zmin, zmax = self._get_box_bounds(self.block, self.cube_index)
         verts = self._make_cuboid_vertices(rmin, rmax, cmin, cmax, zmin, zmax)
+        pr = getattr(self, 'pivot_r', None)
+        pc = getattr(self, 'pivot_c', None)
 
         if p < 0.35:
             local_t = p / 0.35
             theta = local_t * (math.pi / 3.0)
-            rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax)
+            rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax, pr, pc)
             self._render_3d_box(surface, rotated, origin_x, origin_y, renderer)
         else:
             t_fall = (p - 0.35) / 0.65
@@ -603,7 +621,7 @@ class BlockAnimator:
             elif self.direction == Direction.RIGHT:
                 dc_drift = drift_dist
 
-            base_rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax)
+            base_rotated = self._rotate_box_vertices(verts, self.direction, theta, rmin, rmax, cmin, cmax, pr, pc)
             fallen_verts = [
                 (r + dr_drift, c + dc_drift, z + z_fall)
                 for r, c, z in base_rotated

@@ -106,5 +106,41 @@ class TestBlockAnimator(unittest.TestCase):
                     self.assertEqual(len(pt), 3)
 
 
+    def test_occlusion_timing(self):
+        # 1. Rơi vào hố / ô cam vỡ luôn occlude
+        self.animator.start_fall_goal(BlockState(Orientation.STANDING, 2, 2), (2, 2))
+        self.assertTrue(self.animator.should_occlude_falling())
+
+        self.animator.start_fall_fragile(BlockState(Orientation.STANDING, 2, 2), (2, 2))
+        self.assertTrue(self.animator.should_occlude_falling())
+
+        # 2. Rơi mép UP:
+        # progress < 0.35 (đang nghiêng trên sàn) -> False (không bị sàn đè lên)
+        # progress >= 0.35 (chìm xuống vực ra sau) -> True (sàn che khuất)
+        self.animator.start_fall_edge(BlockState(Orientation.STANDING, 2, 2), Direction.UP, duration=1.0)
+        self.animator.update(0.2)  # progress = 0.2 < 0.35
+        self.assertFalse(self.animator.should_occlude_falling())
+
+        self.animator.update(0.25)  # progress = 0.45 >= 0.35
+        self.assertTrue(self.animator.should_occlude_falling())
+
+        # 3. Rơi mép DOWN/LEFT/RIGHT -> False
+        for d in [Direction.DOWN, Direction.LEFT, Direction.RIGHT]:
+            self.animator.start_fall_edge(BlockState(Orientation.STANDING, 2, 2), d, duration=1.0)
+            self.animator.update(0.5)
+            self.assertFalse(self.animator.should_occlude_falling())
+
+    def test_fall_edge_pivot(self):
+        # Kiểm tra fall edge với pivot chỉ định
+        block = BlockState(Orientation.HORIZONTAL, 2, 3)
+        self.animator.start_fall_edge(block, Direction.RIGHT, pivot_c=4.0)
+        self.assertEqual(self.animator.pivot_c, 4.0)
+
+        # Kiểm tra rotation quanh pivot_c=4.0
+        verts = BlockAnimator._make_cuboid_vertices(2, 3, 3, 5, 0, 1)
+        rotated = BlockAnimator._rotate_box_vertices(verts, Direction.RIGHT, math.pi / 2, 2, 3, 3, 5, pivot_c=4.0)
+        self.assertEqual(len(rotated), 8)
+
+
 if __name__ == "__main__":
     unittest.main()
