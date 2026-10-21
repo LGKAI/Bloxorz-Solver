@@ -134,7 +134,14 @@ def run_cli_solver(stage_str: str, algo_str: str):
         print("ĐƯỜNG ĐI CHI TIẾT (SUCCESS ROAD):")
         print("=======================================================")
         for idx, (action, state) in enumerate(zip(["START"] + result.actions, result.states)):
-            act_name = action.value if hasattr(action, "value") else str(action)
+            if isinstance(action, tuple) and len(action) == 2:
+                cube_idx, direction = action
+                dir_str = direction.value if hasattr(direction, "value") else str(direction)
+                act_name = f"Khối {cube_idx}: {dir_str}"
+            elif hasattr(action, "value"):
+                act_name = action.value
+            else:
+                act_name = str(action)
             print(f"\nBước {idx}: [{act_name}] -> {state.block}")
             print_cli_board(state)
         print("\n=======================================================")
