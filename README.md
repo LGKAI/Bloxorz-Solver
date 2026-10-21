@@ -2,7 +2,7 @@
 
 Đồ án Cơ sở AI
 
-🎥 **Video Demo:** [Xem trên YouTube](https://youtu.be/bloxorzsolver)  
+🎥 **Video Demo:** [Xem trên YouTube](https://youtu.be/ORCcDhS5t_M?si=MCSsTSRV6_NXOrRQ)  
 
 ---
 
