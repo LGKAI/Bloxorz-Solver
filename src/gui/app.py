@@ -150,6 +150,15 @@ class BloxorzApp:
         self.font_stage_badge = get_safe_font("segoeui", 14, bold=True)
         self.font_stage_huge = get_safe_font("segoeui", 42, bold=True)
         self.font_stage_sub = get_safe_font("segoeui", 14)
+        self.font_legend_title = get_safe_font("segoeui", 17, bold=True)
+        self.font_legend_item = get_safe_font("segoeui", 13, bold=True)
+        self.font_legend_desc = get_safe_font("segoeui", 12)
+        self.font_legend_hud = get_safe_font("segoeui", 11, bold=True)
+
+        # Trạng thái cửa sổ Chú thích cơ chế & Công tắc (Legend Modal)
+        self.show_legend_modal = False
+        self.legend_close_rect = pygame.Rect(0, 0, 0, 0)
+        self.legend_ok_rect = pygame.Rect(0, 0, 0, 0)
 
         # Trạng thái game hiện tại
         self.map_data: Optional[MapData] = None
@@ -235,7 +244,15 @@ class BloxorzApp:
         """Khởi tạo toàn bộ các nút điều khiển trên Sidebar."""
         self.buttons.clear()
         self.btn_solvers.clear()
-        panel_x = 830
+        panel_x = 835
+
+        # Nút Chú thích trên góc trái màn hình bàn cờ
+        self.btn_help_hud = Button(
+            pygame.Rect(15, 12, 115, 26), "Chú thích",
+            self.toggle_legend_modal, self.font_small,
+            bg_color=(35, 45, 65), hover_color=(55, 75, 110), text_color=TEXT_WHITE
+        )
+        self.buttons.append(self.btn_help_hud)
 
         # Nhóm 1: Chọn màn chơi & Cửa sổ
         self.btn_fullscreen = Button(
@@ -358,6 +375,7 @@ class BloxorzApp:
         self.animator.reset()
         self.board_animator.reset()
         self.reset_solver_buttons()
+        self.show_legend_modal = False
 
     def restart_level(self):
         """Khởi động lại màn chơi hiện tại."""
@@ -760,6 +778,38 @@ class BloxorzApp:
                 if event.type == pygame.QUIT:
                     running = False
 
+                # Nếu đang mở Modal Chú Thích Cơ Chế
+                if self.show_legend_modal:
+                    if event.type == pygame.KEYDOWN:
+                        if event.key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_F1, pygame.K_RETURN, pygame.K_SPACE):
+                            self.show_legend_modal = False
+                            continue
+                    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        # Kiểm tra click vào nút đóng [X] hoặc [Đã hiểu]
+                        if self.legend_close_rect.collidepoint(event.pos) or self.legend_ok_rect.collidepoint(event.pos):
+                            self.show_legend_modal = False
+                            continue
+                        # Click ra bên ngoài hộp thoại cũng đóng modal
+                        card_w, card_h = 860, 600
+                        card_x = (self.width - card_w) // 2
+                        card_y = (self.height - card_h) // 2
+                        if not pygame.Rect(card_x, card_y, card_w, card_h).collidepoint(event.pos):
+                            self.show_legend_modal = False
+                            continue
+                    continue
+
+                # Mở modal chú thích bằng phím H hoặc F1
+                if event.type == pygame.KEYDOWN and event.key in (pygame.K_h, pygame.K_F1):
+                    self.toggle_legend_modal()
+                    continue
+
+                # Click vào thanh Quick HUD Legend ở đáy màn hình bàn cờ để mở modal chi tiết
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    hud_rect = pygame.Rect(15, self.height - 40, 790, 32)
+                    if hud_rect.collidepoint(event.pos):
+                        self.toggle_legend_modal()
+                        continue
+
                 # Nếu đang trong màn hình chuyển cảnh, phím bấm hoặc click trên bàn cờ sẽ chuyển ngay
                 if self.transition_active:
                     if event.type == pygame.KEYDOWN:
@@ -915,7 +965,10 @@ class BloxorzApp:
                     self.board_animator.render_overlay(self.screen, 820, self.height)
 
 
-            # 5. Vẽ thông báo trạng thái Game hoặc Màn hình chuyển cảnh
+            # 5. Thanh chú thích nhanh cơ chế ở cạnh dưới bàn cờ
+            self._render_quick_hud_legend()
+
+            # 6. Vẽ thông báo trạng thái Game hoặc Màn hình chuyển cảnh
             if self.board_animator.is_animating():
                 pass
             elif self.transition_active:
@@ -927,8 +980,12 @@ class BloxorzApp:
             elif self.is_searching:
                 self._draw_status_banner("ĐANG TÌM KIẾM LỜI GIẢI...", TEXT_ACCENT)
 
-            # 6. Vẽ thanh Sidebar điều khiển bên phải
+            # 7. Vẽ thanh Sidebar điều khiển bên phải
             self._render_sidebar()
+
+            # 8. Cửa sổ modal Chú thích cơ chế & Công tắc toàn diện (nếu đang bật)
+            if self.show_legend_modal:
+                self._render_legend_modal()
 
             pygame.display.flip()
 
@@ -1088,18 +1145,18 @@ class BloxorzApp:
             hint_rep = self.font_body.render("Khi giải xong, bạn có thể chạy tua hoặc đi từng bước.", True, TEXT_MUTED)
             self.screen.blit(hint_rep, (x, 465))
 
-        # Hướng dẫn phím bấm thủ công dưới đáy
+        # Hướng dẫn thao tác điều khiển dưới đáy
         guide_y = 665
         pygame.draw.line(self.screen, PANEL_BORDER, (x, guide_y), (x + 395, guide_y), 1)
-        h_guide = self.font_btn.render("Phím chơi thủ công:", True, TEXT_ACCENT)
-        self.screen.blit(h_guide, (x, guide_y + 8))
+        h_guide = self.font_btn.render("Thao tác điều khiển:", True, TEXT_ACCENT)
+        self.screen.blit(h_guide, (x, guide_y + 6))
 
         guide_lines = [
-            "- Mũi tên / WASD: Lăn khối Bloxorz",
-            "- Phím Space: Chuyển đổi khối điều khiển khi phân thân",
-            "- Tự động chơi lại khi rơi sàn | Phím U: Hoàn tác (Undo)"
+            "- Mũi tên / WASD: Lăn khối | Space: Đổi khối phân thân",
+            "- Phím U: Đi lùi (Undo) | Phím R: Chơi lại (Restart)",
+            "- Phím H: Xem chú thích | F11 / ESC: Bật / Thoát toàn màn hình"
         ]
-        gy = guide_y + 30
+        gy = guide_y + 26
         for gl in guide_lines:
             gsurf = self.font_small.render(gl, True, TEXT_MUTED)
             self.screen.blit(gsurf, (x, gy))
@@ -1108,3 +1165,255 @@ class BloxorzApp:
         # Vẽ tất cả nút bấm
         for btn in self.buttons:
             btn.draw(self.screen)
+
+    def toggle_legend_modal(self):
+        """Bật/tắt cửa sổ modal chú thích cơ chế trò chơi."""
+        self.show_legend_modal = not self.show_legend_modal
+
+    def _render_quick_hud_legend(self):
+        """Vẽ thanh chú thích nhanh các loại sàn và công tắc ở cạnh dưới bàn cờ."""
+        hud_rect = pygame.Rect(15, self.height - 40, 790, 32)
+        # Nền mờ kính tối (Dark Glassmorphism)
+        s = pygame.Surface((hud_rect.w, hud_rect.h), pygame.SRCALPHA)
+        s.fill((16, 20, 30, 220))
+        self.screen.blit(s, hud_rect.topleft)
+        pygame.draw.rect(self.screen, (45, 55, 75), hud_rect, width=1, border_radius=6)
+
+        # 6 mục chú giải nhanh
+        items = [
+            ("tile_fragile", "Ô cam: Cấm đứng", (255, 175, 110)),
+            ("switch_round", "Nút tròn: Mọi thế", (160, 205, 255)),
+            ("switch_x", "Nút X: Phải đứng", (255, 160, 160)),
+            ("switch_split", "Nút ( ): Tách đôi", (220, 160, 255)),
+            ("tile_goal", "Đích: Dựng đứng", (255, 225, 120)),
+            ("help_btn", "[H] Chú thích", TEXT_GOLD),
+        ]
+
+        slot_w = hud_rect.w / len(items)
+        cy = hud_rect.centery
+
+        for i, (kind, label, color) in enumerate(items):
+            cx = hud_rect.x + int((i + 0.5) * slot_w)
+
+            # Vẽ icon đặc trưng
+            if kind == "tile_fragile":
+                icon_rect = pygame.Rect(cx - 56, cy - 6, 12, 12)
+                pygame.draw.rect(self.screen, (235, 120, 45), icon_rect, border_radius=2)
+                pygame.draw.line(self.screen, (255, 200, 150), (icon_rect.left, icon_rect.top), (icon_rect.right, icon_rect.bottom), 1)
+            elif kind == "switch_round":
+                pygame.draw.circle(self.screen, (60, 150, 255), (cx - 55, cy), 6)
+                pygame.draw.circle(self.screen, (255, 255, 255), (cx - 55, cy), 2)
+            elif kind == "switch_x":
+                txt_x = self.font_legend_hud.render("X", True, (240, 70, 70))
+                self.screen.blit(txt_x, txt_x.get_rect(center=(cx - 54, cy)))
+            elif kind == "switch_split":
+                txt_sp = self.font_legend_hud.render("( )", True, (185, 90, 245))
+                self.screen.blit(txt_sp, txt_sp.get_rect(center=(cx - 54, cy)))
+            elif kind == "tile_goal":
+                g_rect = pygame.Rect(cx - 56, cy - 6, 12, 12)
+                pygame.draw.rect(self.screen, (15, 18, 22), g_rect, border_radius=2)
+                pygame.draw.rect(self.screen, (255, 215, 0), g_rect, width=1, border_radius=2)
+            elif kind == "help_btn":
+                pass
+
+            txt_surf = self.font_legend_hud.render(label, True, color)
+            txt_rect = txt_surf.get_rect(midleft=(cx - 45 if kind != "help_btn" else cx - 40, cy))
+            self.screen.blit(txt_surf, txt_rect)
+
+            if i < len(items) - 1:
+                sep_x = hud_rect.x + int((i + 1) * slot_w)
+                pygame.draw.line(self.screen, (40, 50, 70), (sep_x, cy - 8), (sep_x, cy + 8), 1)
+
+    def _render_legend_modal(self):
+        """Vẽ bảng cửa sổ Modal hiển thị chi tiết toàn bộ cơ chế sàn, cầu nối, công tắc và phím bấm."""
+        # 1. Nền mờ phủ toàn màn hình
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((10, 14, 24, 230))
+        self.screen.blit(overlay, (0, 0))
+
+        # 2. Hộp thoại chính (Card)
+        card_w, card_h = 860, 600
+        card_x = (self.width - card_w) // 2
+        card_y = (self.height - card_h) // 2
+        card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+
+        pygame.draw.rect(self.screen, (20, 26, 38), card_rect, border_radius=14)
+        pygame.draw.rect(self.screen, (88, 166, 255), card_rect, width=2, border_radius=14)
+
+        # 3. Header
+        # Tiêu đề chính
+        title_surf = self.font_legend_title.render("CẨM NANG CƠ CHẾ & LUẬT CHƠI", True, TEXT_GOLD)
+        self.screen.blit(title_surf, (card_x + 25, card_y + 16))
+
+        # Phụ đề
+        sub_text = "Nắm vững đặc tính của từng loại sàn gạch, hệ thống cầu nối, công tắc để chinh phục 33 màn chơi"
+        sub_surf = self.font_small.render(sub_text, True, TEXT_MUTED)
+        self.screen.blit(sub_surf, (card_x + 25, card_y + 42))
+
+        # Nút đóng [ X ] góc trên bên phải
+        self.legend_close_rect = pygame.Rect(card_x + card_w - 42, card_y + 14, 28, 28)
+        close_hover = self.legend_close_rect.collidepoint(pygame.mouse.get_pos())
+        c_bg = (60, 75, 105) if close_hover else (35, 45, 65)
+        pygame.draw.rect(self.screen, c_bg, self.legend_close_rect, border_radius=6)
+        pygame.draw.rect(self.screen, PANEL_BORDER, self.legend_close_rect, width=1, border_radius=6)
+        x_surf = self.font_btn.render("X", True, (240, 245, 255))
+        self.screen.blit(x_surf, x_surf.get_rect(center=self.legend_close_rect.center))
+
+        # Đường kẻ ngang phân cách header
+        pygame.draw.line(self.screen, PANEL_BORDER, (card_x + 20, card_y + 68), (card_x + card_w - 20, card_y + 68), 1)
+
+        # 4. Nội dung 2 cột
+        col_w = (card_w - 60) // 2
+        col1_x = card_x + 22
+        col2_x = card_x + 30 + col_w
+
+        # --- CỘT 1: SÀN GẠCH & CẦU NỐI ---
+        c1_title = self.font_btn.render("CÁC LOẠI SÀN GẠCH & CẦU NỐI", True, TEXT_ACCENT)
+        self.screen.blit(c1_title, (col1_x + 5, card_y + 78))
+
+        tiles_info = [
+            (
+                "Ô Sàn Thường (Regular)",
+                "- Mặt sàn bê tông kiên cố, an toàn tuyệt đối.",
+                "- Khối sắt có thể lăn nằm hoặc dựng đứng tùy ý.",
+                "tile_reg",
+                (200, 205, 215)
+            ),
+            (
+                "Ô Cam Dễ Vỡ (Fragile Tile)",
+                "- Nằm lăn qua hoặc khối phân thân 1x1x1 đi qua an toàn.",
+                "- CẤM DỰNG ĐỨNG: Khối sẽ làm nứt sập sàn và rơi vực!",
+                "tile_fragile",
+                (255, 140, 50)
+            ),
+            (
+                "Lỗ Đích (Goal Hole)",
+                "- Mục tiêu hoàn thành màn chơi.",
+                "- BẮT BUỘC DỰNG ĐỨNG để rơi lọt vào lòng hố đích.",
+                "tile_goal",
+                TEXT_GOLD
+            ),
+            (
+                "Hệ Thống Cầu Nối (Bridges)",
+                "- Trạng thái Mở (có mặt sàn) hoặc Đóng (viền mờ trên vực).",
+                "- Đóng / mở linh hoạt theo tín hiệu từ các công tắc.",
+                "tile_bridge",
+                (120, 190, 255)
+            )
+        ]
+
+        box_y = card_y + 102
+        for title, line1, line2, icon_type, title_col in tiles_info:
+            box_rect = pygame.Rect(col1_x, box_y, col_w, 94)
+            pygame.draw.rect(self.screen, (16, 21, 31), box_rect, border_radius=8)
+            pygame.draw.rect(self.screen, PANEL_BORDER, box_rect, width=1, border_radius=8)
+
+            # Vẽ biểu tượng minh họa
+            ix = col1_x + 12
+            iy = box_y + 14
+            if icon_type == "tile_reg":
+                pygame.draw.rect(self.screen, (145, 150, 160), (ix, iy, 20, 20), border_radius=3)
+                pygame.draw.rect(self.screen, (220, 225, 235), (ix, iy, 20, 20), width=1, border_radius=3)
+            elif icon_type == "tile_fragile":
+                pygame.draw.rect(self.screen, (235, 120, 45), (ix, iy, 20, 20), border_radius=3)
+                pygame.draw.line(self.screen, (255, 210, 160), (ix + 2, iy + 2), (ix + 18, iy + 18), 2)
+            elif icon_type == "tile_goal":
+                pygame.draw.rect(self.screen, (12, 15, 20), (ix, iy, 20, 20), border_radius=3)
+                pygame.draw.rect(self.screen, (255, 215, 0), (ix, iy, 20, 20), width=2, border_radius=3)
+            elif icon_type == "tile_bridge":
+                pygame.draw.rect(self.screen, (65, 110, 150), (ix, iy, 20, 20), border_radius=3)
+                pygame.draw.line(self.screen, (140, 190, 235), (ix + 4, iy + 10), (ix + 16, iy + 10), 2)
+
+            t_surf = self.font_legend_item.render(title, True, title_col)
+            self.screen.blit(t_surf, (col1_x + 40, box_y + 10))
+
+            l1_surf = self.font_legend_desc.render(line1, True, TEXT_WHITE)
+            l2_surf = self.font_legend_desc.render(line2, True, TEXT_WHITE)
+            self.screen.blit(l1_surf, (col1_x + 14, box_y + 36))
+            self.screen.blit(l2_surf, (col1_x + 14, box_y + 58))
+
+            box_y += 102
+
+        # --- CỘT 2: CÔNG TẮC & PHÂN THÂN ---
+        c2_title = self.font_btn.render("CÔNG TẮC & CƠ CHẾ PHÂN THÂN", True, TEXT_ACCENT)
+        self.screen.blit(c2_title, (col2_x + 5, card_y + 78))
+
+        switches_info = [
+            (
+                "Công Tắc Tròn (Soft Switch - 'O')",
+                "- Kích hoạt ở MỌI TƯ THẾ (nằm, đứng, hoặc khối nhỏ 1x1x1).",
+                "- Tác dụng: Bật / tắt các cây cầu nối tương ứng.",
+                "sw_round",
+                (90, 175, 255)
+            ),
+            (
+                "Công Tắc X Nặng (Heavy Switch - 'X')",
+                "- CHỈ KÍCH HOẠT KHI KHỐI DỰNG ĐỨNG dồn trọng lượng.",
+                "- Lăn nằm hoặc khối phân thân 1x1x1 đè lên KHÔNG tác dụng!",
+                "sw_x",
+                (250, 95, 95)
+            ),
+            (
+                "Công Tắc Phân Thân ('( )')",
+                "- Dựng đứng lên sẽ TÁCH ĐÔI thành 2 khối nhỏ 1x1x1.",
+                "- Nhấn phím SPACE để đổi quyền điều khiển giữa 2 khối.",
+                "sw_split",
+                (210, 120, 255)
+            ),
+            (
+                "Hợp Nhất Khối Phân Thân (Merge)",
+                "- Di chuyển 2 khối 1x1x1 đứng ở 2 ô kề sát nhau.",
+                "- Hai khối sẽ tự động hút và ghép lại thành khối 1x1x2.",
+                "sw_merge",
+                (70, 215, 140)
+            )
+        ]
+
+        box_y = card_y + 102
+        for title, line1, line2, icon_type, title_col in switches_info:
+            box_rect = pygame.Rect(col2_x, box_y, col_w, 94)
+            pygame.draw.rect(self.screen, (16, 21, 31), box_rect, border_radius=8)
+            pygame.draw.rect(self.screen, PANEL_BORDER, box_rect, width=1, border_radius=8)
+
+            ix = col2_x + 12
+            iy = box_y + 14
+            if icon_type == "sw_round":
+                pygame.draw.circle(self.screen, (60, 150, 255), (ix + 10, iy + 10), 9)
+                pygame.draw.circle(self.screen, (255, 255, 255), (ix + 10, iy + 10), 4)
+            elif icon_type == "sw_x":
+                txt_x = self.font_legend_item.render("X", True, (245, 75, 75))
+                self.screen.blit(txt_x, txt_x.get_rect(center=(ix + 10, iy + 10)))
+            elif icon_type == "sw_split":
+                txt_sp = self.font_legend_item.render("( )", True, (200, 110, 255))
+                self.screen.blit(txt_sp, txt_sp.get_rect(center=(ix + 10, iy + 10)))
+            elif icon_type == "sw_merge":
+                pygame.draw.rect(self.screen, (70, 185, 235), (ix + 2, iy + 5, 8, 10), border_radius=2)
+                pygame.draw.rect(self.screen, (215, 105, 235), (ix + 11, iy + 5, 8, 10), border_radius=2)
+
+            t_surf = self.font_legend_item.render(title, True, title_col)
+            self.screen.blit(t_surf, (col2_x + 40, box_y + 10))
+
+            l1_surf = self.font_legend_desc.render(line1, True, TEXT_WHITE)
+            l2_surf = self.font_legend_desc.render(line2, True, TEXT_WHITE)
+            self.screen.blit(l1_surf, (col2_x + 14, box_y + 36))
+            self.screen.blit(l2_surf, (col2_x + 14, box_y + 58))
+
+            box_y += 102
+
+        # 5. Thanh tóm tắt thao tác điều khiển dưới đáy
+        bot_y = card_y + card_h - 76
+        pygame.draw.line(self.screen, PANEL_BORDER, (card_x + 20, bot_y), (card_x + card_w - 20, bot_y), 1)
+
+        line1_surf = self.font_small.render("Thao tác: [Mũi tên / WASD] Lăn khối  |  [Space] Đổi khối phân thân  |  [U] Đi lùi (Undo)", True, TEXT_WHITE)
+        line2_surf = self.font_small.render("[R] Chơi lại (Restart)  |  [H] Xem chú thích  |  [F11 / ESC] Bật / Thoát toàn màn hình", True, TEXT_WHITE)
+        self.screen.blit(line1_surf, (card_x + 25, bot_y + 10))
+        self.screen.blit(line2_surf, (card_x + 25, bot_y + 30))
+
+        # Nút [ Đóng (ESC / H) ]
+        self.legend_ok_rect = pygame.Rect(card_x + card_w - 200, bot_y + 10, 175, 34)
+        ok_hover = self.legend_ok_rect.collidepoint(pygame.mouse.get_pos())
+        ok_bg = (45, 125, 65) if ok_hover else (35, 105, 50)
+        pygame.draw.rect(self.screen, ok_bg, self.legend_ok_rect, border_radius=6)
+        pygame.draw.rect(self.screen, (63, 185, 80), self.legend_ok_rect, width=1, border_radius=6)
+        ok_surf = self.font_btn.render("Đóng (ESC / H)", True, (245, 255, 245))
+        self.screen.blit(ok_surf, ok_surf.get_rect(center=self.legend_ok_rect.center))
